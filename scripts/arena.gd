@@ -59,6 +59,14 @@ func _setup_lighting() -> void:
 			var item := child as CanvasItem
 			if item != null:
 				LitLighting.make_receiver(item)
+	# The GROUND is the FLOOR, not the backdrop. The backdrop keeps its own grid
+	# shader (a receiver material would replace it), but it is opaque, so the lit
+	# ground is drawn just above it (see the Floor z_index in the scenes) with a
+	# semi-transparent authored colour that lets the grid read through. Without
+	# this the torch and its shadows only land on walls, crates and actors.
+	var ground: CanvasItem = get_node_or_null("Floor") as CanvasItem
+	if ground != null:
+		LitLighting.make_receiver(ground)
 	print("[Arena] Lit: %d occluders, ambient %s." % [occluders, str(LitLighting.ARENA_DARKNESS)])
 
 

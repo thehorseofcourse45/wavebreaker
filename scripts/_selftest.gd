@@ -2324,6 +2324,17 @@ func _run(main: Node) -> void:
 			failed.append("lighting: the torch is %s -- not a saturated cool light, so the room is not neon-lit" % str(lit_torch.color))
 		if float(lit_torch.get("height")) <= 16.0:
 			failed.append("lighting: the torch sits at floor height, so it only grazes distant surfaces")
+	# The GROUND receives light: the Floor is a receiver and sits ABOVE the opaque
+	# backdrop, or the torch and its shadows never touch the floor. The backdrop
+	# itself keeps its own grid shader (a receiver material would replace it).
+	var lit_floor := lit_arena.get_node_or_null("Floor") as CanvasItem
+	var lit_backdrop := lit_arena.get_node_or_null("Backdrop") as CanvasItem
+	if lit_floor == null or lit_floor.material != LitLighting.receiver_material():
+		failed.append("lighting: the arena floor is not a lit receiver (the torch never lands on the ground)")
+	elif lit_backdrop != null and lit_floor.z_index <= lit_backdrop.z_index:
+		failed.append("lighting: the lit floor is under the opaque backdrop, so it is never seen")
+	if lit_backdrop != null and lit_backdrop.material == LitLighting.receiver_material():
+		failed.append("lighting: the backdrop was turned into a receiver (its grid shader is gone)")
 	# Every enemy carries its own halo, in its own colour: that is what makes a room read
 	# as a constellation of neon glows instead of one torch in the dark.
 	var lit_enemy: Node = load("res://scenes/enemy_chaser.tscn").instantiate()

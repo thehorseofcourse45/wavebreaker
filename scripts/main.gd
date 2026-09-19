@@ -130,6 +130,9 @@ func _capture_screenshot() -> void:
 	var mode: String = _shot_mode()
 	if mode == "":
 		return
+	if mode == "shadow":
+		_capture_shadow_ab()
+		return
 	var settle: float = 1.5
 	match mode:
 		"run":
@@ -213,6 +216,54 @@ func _capture_screenshot() -> void:
 	img.save_png(path)
 	print("[Shot] saved %s (%dx%d)" % [path, img.get_width(), img.get_height()])
 	_dump_rects(get_node("UI"), 0)
+	get_tree().quit(0)
+
+
+## Test-only shadow A/B (`NEON_SHOT=shadow`): capture the same frame twice, with
+## the room's LightOccluder2Ds on and off, and count sampled pixels the shadows
+## darkened by more than 8/255. The Floor moved to the ground layer, so this is
+## the measurement that proves shadows now land on the floor and not only on the
+## walls (the old, walls-only reading was ~29% of the frame).
+func _capture_shadow_ab() -> void:
+	start_game()
+	await get_tree().create_timer(3.0).timeout
+	if _player._torch == null:
+		print("[Shadow] no torch to measure")
+		get_tree().quit(1)
+		return
+	var occluders: Array[CanvasItem] = []
+	for body: Node in get_node("World").get_children():
+		var occ := body.get_node_or_null("LitOccluder") as CanvasItem
+		if occ != null:
+			occluders.append(occ)
+	if occluders.is_empty():
+		print("[Shadow] no occluders to measure")
+		get_tree().quit(1)
+		return
+	# Shadows ON (the game's default state).
+	await RenderingServer.frame_post_draw
+	var lit_img: Image = get_viewport().get_texture().get_image()
+	# Shadows OFF: hide every occluder, so nothing blocks the torch.
+	for occ: CanvasItem in occluders:
+		occ.visible = false
+	await get_tree().create_timer(0.3).timeout
+	await RenderingServer.frame_post_draw
+	var flat_img: Image = get_viewport().get_texture().get_image()
+	lit_img.save_png("res://shot_shadow_on.png")
+	flat_img.save_png("res://shot_shadow_off.png")
+	for occ: CanvasItem in occluders:
+		occ.visible = true
+	var darker: int = 0
+	var samples: int = 0
+	for y: int in range(0, lit_img.get_height(), 2):
+		for x: int in range(0, lit_img.get_width(), 2):
+			samples += 1
+			var c_on: Color = lit_img.get_pixel(x, y)
+			var c_off: Color = flat_img.get_pixel(x, y)
+			var delta: float = ((c_off.r - c_on.r) + (c_off.g - c_on.g) + (c_off.b - c_on.b)) / 3.0
+			if delta > 8.0 / 255.0:
+				darker += 1
+	print("[Shadow] A/B: %d of %d sampled pixels shadow-darkened (%.1f%% of frame)" % [darker, samples, 100.0 * float(darker) / maxf(float(samples), 1.0)])
 	get_tree().quit(0)
 
 

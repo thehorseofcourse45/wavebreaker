@@ -56,12 +56,12 @@ offset_bottom = 1100.0
 material = SubResource("Mat_backdrop")
 
 [node name="Floor" type="ColorRect" parent="."]
-z_index = -10
+z_index = -4
 offset_left = -1600.0
 offset_top = -1100.0
 offset_right = 1600.0
 offset_bottom = 1100.0
-color = Color(0.11, 0.075, 0.1, 1)
+color = Color(0.11, 0.075, 0.1, 0.72)
 
 [node name="WallNorth" type="StaticBody2D" parent="."]
 position = Vector2(0, -610)
