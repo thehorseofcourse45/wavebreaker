@@ -1040,6 +1040,17 @@ func _run(main: Node) -> void:
 		failed.append("menu: card title '%s' is not RetroMenuArt.CARD_TITLE ('%s')" % [menu_title.text, RetroMenuArt.CARD_TITLE])
 	if not main.get_node("UI/MainMenu").has_node("RetroMenuArt"):
 		failed.append("menu: no RetroMenuArt poster behind the menu")
+	# The poster title is a RULE, not a hardcoded pair of lines: one big line when the name
+	# fits the 570 px column, wrapped at spaces otherwise. This is what makes renaming the
+	# game a one-line edit in project.godot (config/name also sets the window title).
+	var wavebreaker_lines: PackedStringArray = RetroMenuArt.title_lines("Wavebreaker")
+	if wavebreaker_lines.size() != 1 or String(wavebreaker_lines[0]) != "WAVEBREAKER":
+		failed.append("menu: 'Wavebreaker' should be one upper-case poster line, got %s" % str(wavebreaker_lines))
+	if RetroMenuArt.title_lines("Wave Arena Shooter").size() != 2:
+		failed.append("menu: a three-word name should wrap onto two poster lines, got %s"
+				% str(RetroMenuArt.title_lines("Wave Arena Shooter")))
+	if String(RetroMenuArt.title_lines("wavebreaker")[0]) != String(wavebreaker_lines[0]):
+		failed.append("menu: the poster title does not upper-case its input")
 	var menu_started: Array = [false]
 	menu.start_pressed.connect(func() -> void: menu_started[0] = true)
 	(menu_col.get_node("StartButton") as Button).pressed.emit()

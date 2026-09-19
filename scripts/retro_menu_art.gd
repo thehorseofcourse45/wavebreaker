@@ -4,7 +4,33 @@ class_name RetroMenuArt
 ## CARD_TITLE is what the menu card actually shows: the game's name is drawn into the
 ## poster above it (see _draw), so the card is a call to action, not the title.
 const CARD_TITLE := "ENTER THE ARENA"
+## Poster title: one big line when the name fits the 570 px column, wrapped when it does
+## not. The name itself has one source -- project.godot's config/name (which also sets the
+## window title).
+const TITLE_SIZE := 56
+const TITLE_MAX_CHARS := 12
 var _font: Font = ThemeDB.fallback_font
+
+
+## The game's name laid out for the poster, upper-cased and wrapped at spaces so no line
+## runs past TITLE_MAX_CHARS. Extracted from _draw so it can be asserted.
+static func title_lines(raw: String) -> PackedStringArray:
+	var title := raw.strip_edges().to_upper()
+	if title.length() <= TITLE_MAX_CHARS:
+		return PackedStringArray([title])
+	var lines := PackedStringArray()
+	var current := ""
+	for word: String in title.split(" ", false):
+		if current == "":
+			current = word
+		elif (current + " " + word).length() <= TITLE_MAX_CHARS:
+			current += " " + word
+		else:
+			lines.append(current)
+			current = word
+	if current != "":
+		lines.append(current)
+	return lines
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -38,12 +64,11 @@ func _draw() -> void:
 	draw_line(Vector2(660, 44), Vector2(660, 676), Color("#35233f"), 1.0)
 	draw_line(Vector2(660, 44), Vector2(660, 130), Color("#ff4ca5"), 3.0)
 	draw_string(_font, Vector2(58, 65), "N E O N   /   S U R V I V A L", HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color("#55e5eb"))
-	var title := String(ProjectSettings.get_setting("application/config/name", "Wave Arena Shooter")).to_upper()
-	if title == "WAVE ARENA SHOOTER":
-		draw_string(_font, Vector2(54, 137), "WAVE ARENA", HORIZONTAL_ALIGNMENT_LEFT, -1, 56, Color("#f3eaff"))
-		draw_string(_font, Vector2(54, 196), "SHOOTER", HORIZONTAL_ALIGNMENT_LEFT, -1, 56, Color("#f3eaff"))
-	else:
-		draw_string(_font, Vector2(54, 137), title, HORIZONTAL_ALIGNMENT_LEFT, 570, 36, Color("#f3eaff"))
+	var title := String(ProjectSettings.get_setting("application/config/name", "WAVEBREAKER"))
+	var baseline := 137.0
+	for line: String in title_lines(title):
+		draw_string(_font, Vector2(54, baseline), line, HORIZONTAL_ALIGNMENT_LEFT, 570, TITLE_SIZE, Color("#f3eaff"))
+		baseline += TITLE_SIZE * 1.05
 	draw_string(_font, Vector2(58, 641), "OUTLAST THE NIGHT.", HORIZONTAL_ALIGNMENT_LEFT, -1, 22, Color("#f3eaff"))
 	draw_string(_font, Vector2(58, 670), "ONE ARENA. ENDLESS WAVES.", HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color("#9f91b8"))
 	draw_string(_font, Vector2(720, 57), "A R C A D E   S Y S T E M   /   0 1", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color("#827794"))
