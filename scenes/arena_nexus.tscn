@@ -1,0 +1,351 @@
+[gd_scene load_steps=13 format=3]
+
+[ext_resource type="NavigationPolygon" path="res://scenes/arena_nexus_navpoly.tres" id="NavPoly_arena"]
+
+[ext_resource type="PackedScene" path="res://scenes/player.tscn" id="1"]
+[ext_resource type="Script" path="res://scripts/arena.gd" id="2"]
+[ext_resource type="Shader" path="res://shaders/arena_backdrop.gdshader" id="3"]
+
+
+
+[sub_resource type="RectangleShape2D" id="Rect_wall_h"]
+size = Vector2(1640, 20)
+
+[sub_resource type="RectangleShape2D" id="Rect_wall_v"]
+size = Vector2(20, 1220)
+
+[sub_resource type="RectangleShape2D" id="Rect_obstacle_bar"]
+size = Vector2(300, 28)
+
+[sub_resource type="RectangleShape2D" id="Rect_obstacle_diag"]
+size = Vector2(300, 26)
+
+[sub_resource type="RectangleShape2D" id="Rect_obstacle_tall"]
+size = Vector2(28, 200)
+
+[sub_resource type="RectangleShape2D" id="Rect_obstacle_mid"]
+size = Vector2(140, 44)
+
+[sub_resource type="RectangleShape2D" id="Rect_obstacle_core"]
+size = Vector2(120, 40)
+
+[sub_resource type="ShaderMaterial" id="Mat_backdrop"]
+shader = ExtResource("3")
+shader_parameter/size = Vector2(3200, 2200)
+shader_parameter/base_color = Color(0.05, 0.12, 0.09, 1)
+shader_parameter/grid_color = Color(0.28, 0.9, 0.62, 1)
+
+[node name="ArenaRoot" type="Node2D"]
+script = ExtResource("2")
+
+[node name="NavRegion" type="NavigationRegion2D" parent="."]
+navigation_polygon = ExtResource("NavPoly_arena")
+
+[node name="Backdrop" type="ColorRect" parent="."]
+z_index = -5
+offset_left = -1600.0
+offset_top = -1100.0
+offset_right = 1600.0
+offset_bottom = 1100.0
+material = SubResource("Mat_backdrop")
+
+[node name="Floor" type="ColorRect" parent="."]
+z_index = -10
+offset_left = -1600.0
+offset_top = -1100.0
+offset_right = 1600.0
+offset_bottom = 1100.0
+color = Color(0.06, 0.11, 0.09, 1)
+
+[node name="WallNorth" type="StaticBody2D" parent="."]
+position = Vector2(0, -610)
+collision_layer = 8
+collision_mask = 0
+
+[node name="WallShape" type="CollisionShape2D" parent="WallNorth"]
+shape = SubResource("Rect_wall_h")
+
+[node name="WallVisual" type="ColorRect" parent="WallNorth"]
+offset_left = -820.0
+offset_top = -10.0
+offset_right = 820.0
+offset_bottom = 10.0
+color = Color(0.24, 0.42, 0.34, 1)
+
+[node name="WallSouth" type="StaticBody2D" parent="."]
+position = Vector2(0, 610)
+collision_layer = 8
+collision_mask = 0
+
+[node name="WallShape" type="CollisionShape2D" parent="WallSouth"]
+shape = SubResource("Rect_wall_h")
+
+[node name="WallVisual" type="ColorRect" parent="WallSouth"]
+offset_left = -820.0
+offset_top = -10.0
+offset_right = 820.0
+offset_bottom = 10.0
+color = Color(0.24, 0.42, 0.34, 1)
+
+[node name="WallWest" type="StaticBody2D" parent="."]
+position = Vector2(-810, 0)
+collision_layer = 8
+collision_mask = 0
+
+[node name="WallShape" type="CollisionShape2D" parent="WallWest"]
+shape = SubResource("Rect_wall_v")
+
+[node name="WallVisual" type="ColorRect" parent="WallWest"]
+offset_left = -10.0
+offset_top = -610.0
+offset_right = 10.0
+offset_bottom = 610.0
+color = Color(0.24, 0.42, 0.34, 1)
+
+[node name="WallEast" type="StaticBody2D" parent="."]
+position = Vector2(810, 0)
+collision_layer = 8
+collision_mask = 0
+
+[node name="WallShape" type="CollisionShape2D" parent="WallEast"]
+shape = SubResource("Rect_wall_v")
+
+[node name="WallVisual" type="ColorRect" parent="WallEast"]
+offset_left = -10.0
+offset_top = -610.0
+offset_right = 10.0
+offset_bottom = 610.0
+color = Color(0.24, 0.42, 0.34, 1)
+
+[node name="NexusGateN" type="StaticBody2D" parent="."]
+position = Vector2(0, -300)
+collision_layer = 8
+collision_mask = 0
+
+[node name="ShapeNexusGateN" type="CollisionShape2D" parent="NexusGateN"]
+shape = SubResource("Rect_obstacle_bar")
+
+[node name="VisualNexusGateN" type="ColorRect" parent="NexusGateN"]
+offset_left = -150.0
+offset_top = -14.0
+offset_right = 150.0
+offset_bottom = 14.0
+color = Color(0.18, 0.32, 0.26, 1)
+
+[node name="NexusGateS" type="StaticBody2D" parent="."]
+position = Vector2(0, 300)
+collision_layer = 8
+collision_mask = 0
+
+[node name="ShapeNexusGateS" type="CollisionShape2D" parent="NexusGateS"]
+shape = SubResource("Rect_obstacle_bar")
+
+[node name="VisualNexusGateS" type="ColorRect" parent="NexusGateS"]
+offset_left = -150.0
+offset_top = -14.0
+offset_right = 150.0
+offset_bottom = 14.0
+color = Color(0.18, 0.32, 0.26, 1)
+
+[node name="NexusArmNW" type="StaticBody2D" parent="."]
+position = Vector2(-380, -380)
+rotation = 0.785398
+collision_layer = 8
+collision_mask = 0
+
+[node name="ShapeNexusArmNW" type="CollisionShape2D" parent="NexusArmNW"]
+shape = SubResource("Rect_obstacle_diag")
+
+[node name="VisualNexusArmNW" type="ColorRect" parent="NexusArmNW"]
+offset_left = -150.0
+offset_top = -13.0
+offset_right = 150.0
+offset_bottom = 13.0
+color = Color(0.18, 0.32, 0.26, 1)
+
+[node name="NexusArmNE" type="StaticBody2D" parent="."]
+position = Vector2(380, -380)
+rotation = 0.785398
+collision_layer = 8
+collision_mask = 0
+
+[node name="ShapeNexusArmNE" type="CollisionShape2D" parent="NexusArmNE"]
+shape = SubResource("Rect_obstacle_diag")
+
+[node name="VisualNexusArmNE" type="ColorRect" parent="NexusArmNE"]
+offset_left = -150.0
+offset_top = -13.0
+offset_right = 150.0
+offset_bottom = 13.0
+color = Color(0.18, 0.32, 0.26, 1)
+
+[node name="NexusArmSW" type="StaticBody2D" parent="."]
+position = Vector2(-380, 380)
+rotation = 0.785398
+collision_layer = 8
+collision_mask = 0
+
+[node name="ShapeNexusArmSW" type="CollisionShape2D" parent="NexusArmSW"]
+shape = SubResource("Rect_obstacle_diag")
+
+[node name="VisualNexusArmSW" type="ColorRect" parent="NexusArmSW"]
+offset_left = -150.0
+offset_top = -13.0
+offset_right = 150.0
+offset_bottom = 13.0
+color = Color(0.18, 0.32, 0.26, 1)
+
+[node name="NexusArmSE" type="StaticBody2D" parent="."]
+position = Vector2(380, 380)
+rotation = 0.785398
+collision_layer = 8
+collision_mask = 0
+
+[node name="ShapeNexusArmSE" type="CollisionShape2D" parent="NexusArmSE"]
+shape = SubResource("Rect_obstacle_diag")
+
+[node name="VisualNexusArmSE" type="ColorRect" parent="NexusArmSE"]
+offset_left = -150.0
+offset_top = -13.0
+offset_right = 150.0
+offset_bottom = 13.0
+color = Color(0.18, 0.32, 0.26, 1)
+
+[node name="NexusPillarE" type="StaticBody2D" parent="."]
+position = Vector2(620, 0)
+collision_layer = 8
+collision_mask = 0
+
+[node name="ShapeNexusPillarE" type="CollisionShape2D" parent="NexusPillarE"]
+shape = SubResource("Rect_obstacle_tall")
+
+[node name="VisualNexusPillarE" type="ColorRect" parent="NexusPillarE"]
+offset_left = -14.0
+offset_top = -100.0
+offset_right = 14.0
+offset_bottom = 100.0
+color = Color(0.18, 0.32, 0.26, 1)
+
+[node name="NexusPillarW" type="StaticBody2D" parent="."]
+position = Vector2(-620, 0)
+collision_layer = 8
+collision_mask = 0
+
+[node name="ShapeNexusPillarW" type="CollisionShape2D" parent="NexusPillarW"]
+shape = SubResource("Rect_obstacle_tall")
+
+[node name="VisualNexusPillarW" type="ColorRect" parent="NexusPillarW"]
+offset_left = -14.0
+offset_top = -100.0
+offset_right = 14.0
+offset_bottom = 100.0
+color = Color(0.18, 0.32, 0.26, 1)
+
+[node name="NexusIslandN" type="StaticBody2D" parent="."]
+position = Vector2(0, -160)
+collision_layer = 8
+collision_mask = 0
+
+[node name="ShapeNexusIslandN" type="CollisionShape2D" parent="NexusIslandN"]
+shape = SubResource("Rect_obstacle_mid")
+
+[node name="VisualNexusIslandN" type="ColorRect" parent="NexusIslandN"]
+offset_left = -70.0
+offset_top = -22.0
+offset_right = 70.0
+offset_bottom = 22.0
+color = Color(0.18, 0.32, 0.26, 1)
+
+[node name="NexusIslandS" type="StaticBody2D" parent="."]
+position = Vector2(0, 160)
+collision_layer = 8
+collision_mask = 0
+
+[node name="ShapeNexusIslandS" type="CollisionShape2D" parent="NexusIslandS"]
+shape = SubResource("Rect_obstacle_mid")
+
+[node name="VisualNexusIslandS" type="ColorRect" parent="NexusIslandS"]
+offset_left = -70.0
+offset_top = -22.0
+offset_right = 70.0
+offset_bottom = 22.0
+color = Color(0.18, 0.32, 0.26, 1)
+
+[node name="NexusPostNE" type="StaticBody2D" parent="."]
+position = Vector2(250, -250)
+rotation = 0.785398
+collision_layer = 8
+collision_mask = 0
+
+[node name="ShapeNexusPostNE" type="CollisionShape2D" parent="NexusPostNE"]
+shape = SubResource("Rect_obstacle_core")
+
+[node name="VisualNexusPostNE" type="ColorRect" parent="NexusPostNE"]
+offset_left = -60.0
+offset_top = -20.0
+offset_right = 60.0
+offset_bottom = 20.0
+color = Color(0.18, 0.32, 0.26, 1)
+
+[node name="NexusPostSW" type="StaticBody2D" parent="."]
+position = Vector2(-250, 250)
+rotation = 0.785398
+collision_layer = 8
+collision_mask = 0
+
+[node name="ShapeNexusPostSW" type="CollisionShape2D" parent="NexusPostSW"]
+shape = SubResource("Rect_obstacle_core")
+
+[node name="VisualNexusPostSW" type="ColorRect" parent="NexusPostSW"]
+offset_left = -60.0
+offset_top = -20.0
+offset_right = 60.0
+offset_bottom = 20.0
+color = Color(0.18, 0.32, 0.26, 1)
+
+[node name="NexusCore" type="StaticBody2D" parent="."]
+position = Vector2(420, 0)
+rotation = 0.785398
+collision_layer = 8
+collision_mask = 0
+
+[node name="ShapeNexusCore" type="CollisionShape2D" parent="NexusCore"]
+shape = SubResource("Rect_obstacle_core")
+
+[node name="VisualNexusCore" type="ColorRect" parent="NexusCore"]
+offset_left = -60.0
+offset_top = -20.0
+offset_right = 60.0
+offset_bottom = 20.0
+color = Color(0.18, 0.32, 0.26, 1)
+
+[node name="Spawn1" type="Marker2D" parent="." groups=["spawn_points"]]
+position = Vector2(-700, -520)
+
+[node name="Spawn2" type="Marker2D" parent="." groups=["spawn_points"]]
+position = Vector2(700, -520)
+
+[node name="Spawn3" type="Marker2D" parent="." groups=["spawn_points"]]
+position = Vector2(-700, 520)
+
+[node name="Spawn4" type="Marker2D" parent="." groups=["spawn_points"]]
+position = Vector2(700, 520)
+
+[node name="Spawn5" type="Marker2D" parent="." groups=["spawn_points"]]
+position = Vector2(0, -520)
+
+[node name="Spawn6" type="Marker2D" parent="." groups=["spawn_points"]]
+position = Vector2(0, 520)
+
+[node name="Spawn7" type="Marker2D" parent="." groups=["spawn_points"]]
+position = Vector2(-700, 0)
+
+[node name="Spawn8" type="Marker2D" parent="." groups=["spawn_points"]]
+position = Vector2(700, 0)
+
+[node name="Player" parent="." instance=ExtResource("1")]
+
+[node name="EnemyContainer" type="Node2D" parent="." groups=["enemy_container"]]
+
+[node name="EffectsLayer" type="Node2D" parent="." groups=["effects_layer"]]
+z_index = 20

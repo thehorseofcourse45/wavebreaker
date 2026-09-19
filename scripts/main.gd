@@ -31,11 +31,12 @@ const ARENA_SCENES: Array[String] = [
 	"res://scenes/arena.tscn",
 	"res://scenes/arena_deep.tscn",
 	"res://scenes/arena_vault.tscn",
+	"res://scenes/arena_nexus.tscn",
 ]
 ## Unlockable that has to be earned before Main may switch to that arena ("" =
 ## always available). The vault is the reward for reaching wave 20, so a player who
 ## gets there without it simply stays in the deep arena.
-const ARENA_UNLOCKS: Array[String] = ["", "", "vault_arena"]
+const ARENA_UNLOCKS: Array[String] = ["", "", "vault_arena", ""]
 ## Unlockable "second_wind": the one auto-revive per run, at this share of max HP.
 const SECOND_WIND_FRACTION := 0.30
 
@@ -157,6 +158,11 @@ func _capture_screenshot() -> void:
 			# so its LOCKED palette is what this shot shows.
 			start_game()
 			_switch_arena(2)
+			settle = 12.0
+		"nexus":
+			# Arena 4, for comparing the retro pass across all four arenas.
+			start_game()
+			_switch_arena(3)
 			settle = 12.0
 		"showcase":
 			# New-archetype exhibit: dormant bulwarks and leapers at fixed offsets
@@ -621,7 +627,7 @@ func _on_shop_resume() -> void:
 	# unlockable adds boss waves at the halfway mark, which are one boss and
 	# must NOT open an arena early.
 	if _waves.current_wave % WaveManager.BOSS_EVERY == 0:
-		_switch_arena(_arena_index + 1)
+		_advance_arena()
 	if not _fresh_unlocks.is_empty():
 		_banner.show_banner("UNLOCKED: %s" % Unlockables.display_name(_fresh_unlocks[0]).to_upper())
 		_fresh_unlocks.clear()
@@ -629,6 +635,28 @@ func _on_shop_resume() -> void:
 
 
 # ------------------------------------------------------------- arena swap ---
+
+## Arena progression. Each boss-wave boundary first tries the next arena in the
+## list (so arenas open in order and the gated vault still requires its
+## unlockable). Once the end is reached -- or the next one is gated out -- it
+## ROTATES: stepping to the next ungated arena, wrapping. Arena 1 is skipped in
+## the rotation (it is the start, not a destination). Chosen over a "force" flag
+## so a locked vault can never be reached by rotation alone.
+func _advance_arena() -> void:
+	if _arena_index + 1 < ARENA_SCENES.size():
+		var before: int = _arena_index
+		_switch_arena(_arena_index + 1)
+		if _arena_index != before:
+			return
+	for step: int in range(1, ARENA_SCENES.size()):
+		var next: int = (_arena_index + step) % ARENA_SCENES.size()
+		if next == 0:
+			continue
+		var gate: String = ARENA_UNLOCKS[next] if next < ARENA_UNLOCKS.size() else ""
+		if gate == "":
+			_switch_arena(next)
+			return
+
 
 ## Replace the whole World node under a running game. The Player node is CARRIED
 ## OVER (health, upgrades, i-frames and its PlayerCamera all live on it), so the

@@ -2310,6 +2310,52 @@ func _run(main: Node) -> void:
 		failed.append("lighting: an additive material was converted to a receiver (the glow would be shaded away)")
 	lit_additive.free()
 
+	# -- Arena 4 (nexus): ungated, swaps in, every spawn reaches the player ------
+	# The fourth arena is a list entry + a baked scene; the coverage probe below
+	# walks ARENA_SCENES, so a missing registration is caught here, not by editing
+	# that loop.
+	if main.ARENA_SCENES.size() < 4:
+		failed.append("arena coverage: no fourth arena registered in ARENA_SCENES")
+	else:
+		var nexus_scene: String = main.ARENA_SCENES[3]
+		if not ResourceLoader.exists(nexus_scene):
+			failed.append("arena coverage: the fourth arena scene is missing (%s)" % nexus_scene)
+		_set_unlock_flags({})
+		main._switch_arena(3)
+		if main._arena_index != 3:
+			failed.append("arena coverage: arena 4 did not swap in (index %d)" % main._arena_index)
+		var nexus_world: Node2D = main.get_node("World") as Node2D
+		if nexus_world.get_node_or_null("NexusCore") == null:
+			failed.append("arena coverage: arena 4 is not the nexus scene")
+		var nexus_map: RID = nexus_world.get_world_2d().navigation_map
+		for nexus_settle: int in 12:
+			await main.get_tree().physics_frame
+		NavigationServer2D.map_force_update(nexus_map)
+		var nexus_spawns: Array[Node] = main.get_tree().get_nodes_in_group("spawn_points")
+		if nexus_spawns.size() < 4:
+			failed.append("arena coverage: arena 4 has %d spawn points, expected at least 4" % nexus_spawns.size())
+		var nexus_space: PhysicsDirectSpaceState2D = nexus_world.get_world_2d().direct_space_state
+		var nexus_shape := CircleShape2D.new()
+		nexus_shape.radius = 20.0
+		var nexus_player: Node2D = main.get_node("World/Player") as Node2D
+		for nexus_sp: Node in nexus_spawns:
+			var nexus_from: Vector2 = (nexus_sp as Node2D).global_position
+			var nexus_q := PhysicsShapeQueryParameters2D.new()
+			nexus_q.shape = nexus_shape
+			nexus_q.collision_mask = 8
+			nexus_q.transform = Transform2D(0.0, nexus_from)
+			if not nexus_space.intersect_shape(nexus_q, 1).is_empty():
+				failed.append("arena coverage: arena 4 spawn %s sits in wall/obstacle geometry" % nexus_sp.name)
+			var nexus_path: PackedVector2Array = NavigationServer2D.map_get_path(
+					nexus_map, nexus_from, nexus_player.global_position, true)
+			if nexus_path.size() < 2 or nexus_path[0].distance_to(nexus_from) > 30.0:
+				failed.append("arena coverage: arena 4 spawn %s cannot reach the player" % nexus_sp.name)
+		# Rotation from the last arena steps to the next ungated one, wrapping and
+		# skipping arena 1 (it is the start, not a destination).
+		main._advance_arena()
+		if main._arena_index == 3:
+			failed.append("arena coverage: rotation did not leave the last arena")
+
 	# -- The retro pass covers EVERY arena, not just the one it was designed on --
 	# arena.gd adds the art layer and tunes the backdrop at runtime, so an arena added or
 	# rebuilt later silently loses the redesign. Instantiate each scene and check the pass
