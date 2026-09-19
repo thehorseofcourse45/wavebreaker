@@ -1047,6 +1047,89 @@ func _run(main: Node) -> void:
 		failed.append("boss: 100 knockback moved it %.1f, expected %.1f at 85%% resist" % [kb_boss._knockback_vel.x, kb_expected])
 	kb_boss.queue_free()
 
+	# -- Boss phases: three thresholds, once each, never while dormant ----------
+	# A dormant boss takes a past-threshold hit without transitioning (the
+	# phase check lives in _update_behavior, which dormancy freezes); waking
+	# below a threshold fires it exactly once, and no later hit re-fires it.
+	var ph_player: Node = main.get_node("World/Player")
+	var ph_keep_hp: int = ph_player.health
+	var ph_keep_max: int = ph_player.max_health
+	ph_player.max_health = 400
+	ph_player.health = 400
+	ph_player._invuln_timer = 30.0   # the fixtures below sling bullets around
+	var ph_boss: Node = load("res://scenes/enemy_boss.tscn").instantiate()
+	ph_boss.position = Vector2(-200, -420)
+	wm._enemy_container.add_child(ph_boss)
+	ph_boss.is_dormant = true
+	var phase_events: Array[int] = []
+	ph_boss.boss_phase_changed.connect(func(phase: int, _c: Color, _at: Vector2) -> void: phase_events.append(phase))
+	ph_boss.take_damage(int(float(ph_boss.max_health) * 0.5))   # ratio ~0.5: past 0.66 already
+	for i in 3:
+		await main.get_tree().physics_frame
+	if not phase_events.is_empty():
+		failed.append("boss phases: fired while dormant (%s)" % str(phase_events))
+	ph_boss.is_dormant = false
+	for i in 3:
+		await main.get_tree().physics_frame
+	if phase_events != [2]:
+		failed.append("boss phases: waking under 0.66 fired %s, expected exactly [2]" % str(phase_events))
+	ph_boss.take_damage(10)   # same phase, more damage: must not re-fire
+	for i in 3:
+		await main.get_tree().physics_frame
+	if phase_events != [2]:
+		failed.append("boss phases: phase 2 re-fired (%s)" % str(phase_events))
+	while float(ph_boss.health) / float(ph_boss.max_health) >= EnemyBoss.PHASE_3_AT:
+		ph_boss.take_damage(int(float(ph_boss.max_health) * 0.1) + 1)
+	for i in 3:
+		await main.get_tree().physics_frame
+	if phase_events != [2, 3]:
+		failed.append("boss phases: crossing 0.33 fired %s, expected exactly [2, 3]" % str(phase_events))
+	if ph_boss.ring_bullets != ph_boss.burst_ring_bullets:
+		failed.append("boss phases: phase 2 never fattened the ring (%d, wanted %d)" % [ph_boss.ring_bullets, ph_boss.burst_ring_bullets])
+	if not ph_boss.death_burst_color.is_equal_approx(EnemyBoss.PHASE_3_COLOR):
+		failed.append("boss phases: the death burst never shifted to the phase colour (%s)" % str(ph_boss.death_burst_color))
+	# Phase 3 charge: parked 800+ px out, the boss must actually DASH -- a
+	# per-frame step more than double what its 72 px/s walk can manage -- and
+	# it must never reach the player inside the window (a dash that connects
+	# would kill the fixture mid-probe).
+	var ph_last: Vector2 = ph_boss.global_position
+	var ph_max_step: float = 0.0
+	var ph_charged: bool = false
+	for i in 120:
+		await main.get_tree().physics_frame
+		var ph_step: float = ph_boss.global_position.distance_to(ph_last)
+		ph_last = ph_boss.global_position
+		ph_max_step = maxf(ph_max_step, ph_step)
+		if ph_boss._charging:
+			ph_charged = true
+	if not ph_charged:
+		failed.append("boss phases: phase 3 never raised a charge")
+	elif ph_max_step <= float(ph_boss.move_speed) / 60.0 * 2.0:
+		failed.append("boss phases: the biggest step was %.1f px -- a charge at %.0f px/s never landed" % [ph_max_step, ph_boss.charge_speed])
+	ph_boss.queue_free()
+	# Phase 1 summon: two minis emitted on the interval. The probe parents them
+	# (in the real game the WaveManager's splitter plumbing does).
+	var sum_boss: Node = load("res://scenes/enemy_boss.tscn").instantiate()
+	sum_boss.position = Vector2(-600, -520)
+	sum_boss.minion_interval = 0.3
+	wm._enemy_container.add_child(sum_boss)
+	var summoned: Array = []
+	sum_boss.split_spawned.connect(func(pair: Array) -> void:
+		for mini: Node in pair:
+			wm._enemy_container.add_child(mini)
+		summoned.append_array(pair))
+	for i in 40:
+		await main.get_tree().physics_frame
+	if summoned.size() < 2:
+		failed.append("boss phases: phase 1 summoned %d minis, expected 2" % summoned.size())
+	for ph_mini: Node in summoned:
+		ph_mini.queue_free()
+	sum_boss.queue_free()
+	ph_player.max_health = ph_keep_max
+	ph_player.health = ph_keep_hp
+	ph_player._invuln_timer = 0.0
+	BulletPool.reset()
+
 	# -- Boss: giant, barrier-ignoring, sprays swirling hostiles --------------
 	# Spawned through the SAME registry the wave uses, so a missing match arm or
 	# a bad scene export fails here instead of silently spawning a chaser.

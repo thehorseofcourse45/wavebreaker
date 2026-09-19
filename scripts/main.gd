@@ -168,6 +168,19 @@ func _capture_screenshot() -> void:
 				showcase_box.add_child(exhibit)
 				exhibit.is_dormant = true
 			settle = 3.0
+		"bossp":
+			# A boss mid-fight in phase 2 (radial burst): fat ring, phase burst,
+			# and the announcement all on screen. Placed far enough that the
+			# 2 s settle ends before its walk reaches the player.
+			start_game()
+			_waves.stop()
+			_waves._intermission_timer.stop()
+			var bp_box: Node = get_tree().get_first_node_in_group("enemy_container")
+			var bp_boss: EnemyBoss = (load("res://scenes/enemy_boss.tscn") as PackedScene).instantiate() as EnemyBoss
+			bp_boss.position = Vector2(360, 0)
+			bp_box.add_child(bp_boss)
+			bp_boss.take_damage(int(float(bp_boss.max_health) * 0.4))   # wakes into phase 2
+			settle = 2.0
 		_:
 			pass
 	await get_tree().create_timer(settle).timeout
@@ -461,6 +474,19 @@ func _watch_enemy(node: Node) -> void:
 	var enemy: EnemyBase = node as EnemyBase
 	if enemy != null and not enemy.died.is_connected(_on_enemy_killed):
 		enemy.died.connect(_on_enemy_killed)
+	# Bosses announce their phase transitions; Main owns the banner and the
+	# juice, because systems never reference each other directly.
+	if enemy != null and enemy.has_signal("boss_phase_changed") \
+			and not enemy.boss_phase_changed.is_connected(_on_boss_phase_changed):
+		enemy.boss_phase_changed.connect(_on_boss_phase_changed)
+
+
+## A boss crossed a health threshold: announce it once, shake the room, pop the
+## phase-coloured burst where it happened.
+func _on_boss_phase_changed(phase: int, color: Color, at: Vector2) -> void:
+	_banner.show_banner("BOSS PHASE %d" % phase)
+	_camera.add_trauma(0.55)
+	DeathBurst.spawn(_effects_layer, at, color, 130.0, 0.4)
 
 
 func _on_enemy_killed(enemy: EnemyBase) -> void:
@@ -476,7 +502,7 @@ func _on_enemy_killed(enemy: EnemyBase) -> void:
 	_hud.set_score(_score)
 	_hud.set_credits(_credits)
 	AudioManager.play_enemy_death()
-	DeathBurst.spawn(_effects_layer, enemy.global_position, Color(1.0, 0.55, 0.2))
+	DeathBurst.spawn(_effects_layer, enemy.global_position, enemy.death_burst_color)
 	_camera.add_trauma(0.22)
 	_camera.add_punch(0.6)
 	_hit_stop()

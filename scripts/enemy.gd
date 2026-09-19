@@ -71,6 +71,10 @@ var _retarget_timer: float = 0.0
 var _nav_fallback: bool = false  # true = steer directly (no usable navmesh)
 var _player: Node2D = null
 
+## The colour of the burst Main pops when this enemy dies. The boss shifts it
+## per combat phase, so a kill reads as the phase it died in.
+var death_burst_color: Color = Color(1.0, 0.55, 0.2)
+
 ## The colour this enemy shows when it is NOT flashing, and the flash itself.
 ## EnemyBase owns Body.color so the hit flash has exactly one writer; variants
 ## that tint their body set _base_color (or override _base_tint()) instead.
