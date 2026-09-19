@@ -380,6 +380,127 @@ func _run(main: Node) -> void:
 	ward.queue_free()
 	leaper.queue_free()
 
+	# -- Affixes: shielded / frenzied / volatile --------------------------------
+	# Shielded: 0 damage while the shield is up, full damage in the down window.
+	var aff_fixture: Node = load("res://scenes/enemy_chaser.tscn").instantiate()
+	aff_fixture.affix = "shielded"
+	aff_fixture.position = Vector2(-300, -420)
+	wm._enemy_container.add_child(aff_fixture)
+	await main.get_tree().physics_frame
+	if not aff_fixture._affix_shielded:
+		failed.append("affix shielded: shield never came up in _ready")
+	var aff_hp0: int = aff_fixture.health
+	aff_fixture.take_damage(10)
+	if aff_fixture.health != aff_hp0:
+		failed.append("affix shielded: damage leaked through a raised shield")
+	aff_fixture._affix_shield_timer = 0.01   # force the toggle on the next tick
+	var aff_shield_frames := 0
+	while aff_fixture._affix_shielded and aff_shield_frames < 30:
+		await main.get_tree().physics_frame
+		aff_shield_frames += 1
+	aff_fixture.take_damage(10)
+	if aff_fixture.health != aff_hp0 - 10:
+		failed.append("affix shielded: %d damage in the down window, expected 10" % (aff_hp0 - aff_fixture.health))
+	aff_fixture.queue_free()
+
+	# Frenzied: measurably further over the same frames, its tint reaches the
+	# halo (the documented trap: tints applied after the halo keeps the old
+	# light colour), and its touch cooldown shrank.
+	var plain_ch: Node = load("res://scenes/enemy_chaser.tscn").instantiate()
+	plain_ch.position = Vector2(-400, 320)
+	wm._enemy_container.add_child(plain_ch)
+	var frenz_ch: Node = load("res://scenes/enemy_chaser.tscn").instantiate()
+	frenz_ch.affix = "frenzied"
+	frenz_ch.position = Vector2(-400, -320)
+	wm._enemy_container.add_child(frenz_ch)
+	var plain_contact: float = plain_ch.contact_cooldown
+	await main.get_tree().physics_frame
+	var plain_closing: float = plain_ch.global_position.distance_to(arch_player.global_position)
+	var frenz_closing: float = frenz_ch.global_position.distance_to(arch_player.global_position)
+	for i in 40:
+		await main.get_tree().physics_frame
+	plain_closing -= plain_ch.global_position.distance_to(arch_player.global_position)
+	frenz_closing -= frenz_ch.global_position.distance_to(arch_player.global_position)
+	if frenz_closing <= plain_closing + 10.0:
+		failed.append("affix frenzied: closed %.0f px vs plain %.0f px -- the speed hook never landed" % [frenz_closing, plain_closing])
+	if frenz_ch.contact_cooldown >= plain_contact:
+		failed.append("affix frenzied: contact cooldown %.2f did not shrink below %.2f" % [frenz_ch.contact_cooldown, plain_contact])
+	if frenz_ch._base_color != EnemyBase.AFFIXES["frenzied"]["tint"]:
+		failed.append("affix frenzied: the tint never reached _base_color")
+	else:
+		var frenz_halo: Node = null
+		for frenz_child: Node in frenz_ch.get_children():
+			if frenz_child is LitPointLight2D:
+				frenz_halo = frenz_child
+		if frenz_halo == null or not frenz_halo.color.is_equal_approx(
+				(frenz_ch._base_color as Color).lightened(EnemyBase.GLOW_LIFT)):
+			failed.append("affix frenzied: the halo kept the pre-affix colour")
+	plain_ch.queue_free()
+	frenz_ch.queue_free()
+
+	# Volatile: death blasts the player ONCE inside the radius, and never at
+	# range. The player is pinned (earlier probes knock it around) and given a
+	# big HP pool so the probe measures the blast, not a death.
+	arch_player.global_position = Vector2.ZERO
+	arch_player.velocity = Vector2.ZERO
+	arch_player.is_alive = true
+	arch_player.max_health = 400
+	arch_player.health = 400
+	arch_player._invuln_timer = 0.0
+	var vol: Node = load("res://scenes/enemy_chaser.tscn").instantiate()
+	vol.affix = "volatile"
+	vol.position = Vector2(60, 0)
+	wm._enemy_container.add_child(vol)
+	vol.is_dormant = true
+	await main.get_tree().physics_frame
+	arch_player._invuln_timer = 0.0
+	vol.take_damage(9999)
+	await main.get_tree().process_frame
+	if 400 - arch_player.health != EnemyBase.VOLATILE_DAMAGE:
+		failed.append("affix volatile: blast moved the player's health by %d, expected %d" % [400 - arch_player.health, EnemyBase.VOLATILE_DAMAGE])
+	# Same death far outside the radius: nothing.
+	arch_player.health = 400
+	arch_player._invuln_timer = 0.0
+	vol = load("res://scenes/enemy_chaser.tscn").instantiate()
+	vol.affix = "volatile"
+	vol.position = Vector2(500, 0)
+	wm._enemy_container.add_child(vol)
+	vol.is_dormant = true
+	await main.get_tree().physics_frame
+	if vol._base_color != EnemyBase.AFFIXES["volatile"]["tint"]:
+		failed.append("affix volatile: the tint never reached _base_color")
+	vol.take_damage(9999)
+	await main.get_tree().process_frame
+	if 400 - arch_player.health != 0:
+		failed.append("affix volatile: the blast reached %d px out (radius is %d)" % [500, EnemyBase.VOLATILE_RADIUS])
+	arch_player.max_health = base_hp
+	arch_player.health = base_hp
+
+	# The roll itself: forced on, a spawn through the real registry path must
+	# carry one; and forced spawns never pick an id outside the table.
+	var aff_saved_force: bool = wm.force_affixes
+	var aff_saved_tele: float = wm.spawn_telegraph_time
+	var aff_saved_alive: int = wm._alive
+	var aff_kids: Array[Node] = wm._enemy_container.get_children()
+	wm.force_affixes = true
+	wm.spawn_telegraph_time = 0.0
+	wm._spawn_enemy("chaser")
+	wm._spawn_enemy("tank")
+	wm.spawn_telegraph_time = aff_saved_tele
+	var aff_new: Array[Node] = []
+	for aff_child: Node in wm._enemy_container.get_children():
+		if not aff_kids.has(aff_child):
+			aff_new.append(aff_child)
+	if aff_new.size() != 2:
+		failed.append("affix roll: forced spawns produced %d enemies, expected 2" % aff_new.size())
+	for aff_spawned: Node in aff_new:
+		if aff_spawned.affix == "" or not EnemyBase.AFFIXES.has(aff_spawned.affix):
+			failed.append("affix roll: a forced spawn carried affix \"%s\" (empty or unknown)" % aff_spawned.affix)
+		aff_spawned.queue_free()
+	wm.force_affixes = aff_saved_force
+	wm._alive = aff_saved_alive
+	wm.stop()
+
 	# -- Enemy rounds are hostile: they hurt the player, never their own kind ---
 	# Regression: Bullet.fire() used to reset `hostile` right after BulletPool
 	# set it, so every enemy shot was harmless to the player AND damaged other

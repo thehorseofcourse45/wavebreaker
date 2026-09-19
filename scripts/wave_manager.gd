@@ -94,6 +94,16 @@ const BOSS_EVERY := 10
 const HARD_ARENA_HP := 1.30
 const HARD_ARENA_SPEED := 1.10
 
+@export_group("Affixes")
+## Chance any one enemy rolls an affix at wave 1, how fast it grows per wave,
+## and the cap. Affixes never roll on the elite (its shield IS its identity)
+## or the boss (its phases are their own show).
+@export var affix_chance: float = 0.08
+@export var affix_growth: float = 0.01
+@export var affix_chance_max: float = 0.35
+## Set by a run mutator: every spawn rolls one, chance table ignored.
+var force_affixes: bool = false
+
 @export_group("Enemy scenes")
 @export var chaser_scene: PackedScene = preload("res://scenes/enemy_chaser.tscn")
 @export var rusher_scene: PackedScene = preload("res://scenes/enemy_rusher.tscn")
@@ -255,6 +265,15 @@ func rebind_container() -> void:
 	_enemy_container = container
 
 
+## One affix id for this spawn, or "" for none.
+func _roll_affix(wave_number: int) -> String:
+	var chance: float = minf(affix_chance + float(maxi(wave_number - 1, 0)) * affix_growth, affix_chance_max)
+	if not force_affixes and randf() >= chance:
+		return ""
+	var keys: Array = EnemyBase.AFFIXES.keys()
+	return String(keys[randi() % keys.size()])
+
+
 func _composition_for_wave(wave_number: int) -> Dictionary:
 	if is_boss_wave(wave_number):
 		# The boss IS the wave: normal scaling for its stat multipliers, but the
@@ -344,6 +363,11 @@ func _spawn_enemy(type_name: String) -> void:
 	# multiplicatively on top.
 	enemy.max_health = maxi(1, int(round(float(enemy.max_health) * _hp_mult)))
 	enemy.move_speed *= _speed_mult
+	# Affix roll: skipped for the elite (its shield IS its identity -- two
+	# gates on one take_damage would double-lock it) and the boss (its phases
+	# are its own show).
+	if type_name != "elite" and type_name != "boss":
+		enemy.affix = _roll_affix(current_wave)
 	enemy.position = _pick_spawn_position()
 	# Count it BEFORE it is in the tree: a wave must not read as cleared while
 	# enemies are still materialising behind their telegraph.

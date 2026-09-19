@@ -37,6 +37,29 @@ signal died(enemy: EnemyBase)
 ## least 1 so a mitigated enemy can still be killed.
 @export var damage_taken_mult: float = 1.0
 
+@export_group("Affix")
+## Elite-style modifier rolled by the WaveManager on spawn (see its affix
+## exports). Applied in _ready BEFORE the halo is built, so a tinted affix
+## also tints the halo light. Affixed enemies deliberately do NOT join the
+## "elites" group: the elite is the only elite, and elite_kills stays honest.
+var affix: String = ""
+
+## The modifier table: one entry per affix, a tint plus its hooks.
+## shielded: periodic invulnerability windows (the elite's mechanic, generic).
+## frenzied: faster, and its touch bites twice as often.
+## volatile: one-shot blast next to the player on death.
+const AFFIXES: Dictionary = {
+	"shielded": {"tint": Color(0.4, 0.9, 1.0), "up": 2.0, "down": 1.3},
+	"frenzied": {"tint": Color(1.0, 0.55, 0.15), "speed": 1.45, "contact": 0.5},
+	"volatile": {"tint": Color(1.0, 0.8, 0.2)},
+}
+const VOLATILE_RADIUS := 95.0
+const VOLATILE_DAMAGE := 12
+
+var _affix_shielded: bool = false
+var _affix_shield_timer: float = 0.0
+var _pre_affix_color: Color = Color.WHITE
+
 var health: int = max_health
 var is_dead: bool = false
 var is_dormant: bool = false  # set on game over: freezes the enemy in place
@@ -87,6 +110,8 @@ func _ready() -> void:
 	health = max_health
 	if is_instance_valid(_body):
 		_base_color = _body.color
+	_apply_affix()   # stats + tint, before the halo reads the tint
+	if is_instance_valid(_body):
 		# Lit: enemies are receivers, so the player's torch is what reveals them.
 		LitLighting.make_receiver(_body)
 		# ...and each one glows on its own, in its own colour (rime-tinted enemies glow
@@ -94,6 +119,41 @@ func _ready() -> void:
 		# whole frame's budget for a halo nobody looks at.
 		LitLighting.add_point_light(self, _base_tint().lightened(GLOW_LIFT), GLOW_RANGE, GLOW_ENERGY)
 	_build_rim()
+
+
+## One place turns a rolled affix id into stats + tint. Runs once, in _ready,
+## before anything renders.
+func _apply_affix() -> void:
+	if affix == "" or not AFFIXES.has(affix):
+		return
+	_pre_affix_color = _base_color
+	var def: Dictionary = AFFIXES[affix]
+	match affix:
+		"shielded":
+			_affix_shielded = true
+			_affix_shield_timer = float(def["up"])
+			_base_color = def["tint"]
+		"frenzied":
+			move_speed *= float(def["speed"])
+			contact_cooldown *= float(def["contact"])
+			_base_color = def["tint"]
+		"volatile":
+			_base_color = def["tint"]
+
+
+## Per-frame affix upkeep (shield cycles). Called from _physics_process only
+## while alive and awake.
+func _tick_affix(delta: float) -> void:
+	if affix != "shielded":
+		return
+	_affix_shield_timer -= delta
+	if _affix_shield_timer <= 0.0:
+		_affix_shielded = not _affix_shielded
+		var def: Dictionary = AFFIXES["shielded"]
+		_affix_shield_timer = float(def["up"]) if _affix_shielded else float(def["down"])
+		# Shield up = the affix's cold cyan; shield down = the body's natural
+		# colour, so "vulnerable" reads as "the enemy you already know".
+		_base_color = def["tint"] if _affix_shielded else _pre_affix_color
 
 
 ## Outline slightly larger than the body, drawn BEHIND it so only the outer half
@@ -135,6 +195,7 @@ func _physics_process(delta: float) -> void:
 	if is_dead or is_dormant:
 		return
 	_contact_timer = maxf(_contact_timer - delta, 0.0)
+	_tick_affix(delta)
 	_update_behavior(delta)
 	_refresh_target()
 	var desired: Vector2 = _desired_velocity()
@@ -223,6 +284,8 @@ func _check_player_contact() -> void:
 func take_damage(amount: int, knockback: Vector2 = Vector2.ZERO) -> void:
 	if is_dead or amount <= 0:
 		return
+	if _affix_shielded:
+		return   # shielded affix: the round still dies on contact, no damage lands
 	var dealt: int = maxi(1, int(round(float(amount) * damage_taken_mult)))
 	health -= dealt
 	_flash_timer = flash_time
@@ -236,10 +299,25 @@ func _die() -> void:
 	if is_dead:
 		return
 	is_dead = true
+	if affix == "volatile":
+		_explode_volatile()
 	# Stop colliding this frame so stray bullets can't double-count the kill.
 	set_deferred("collision_layer", 0)
 	set_deferred("collision_mask", 0)
 	died.emit(self)
+
+
+## Volatile affix: one-shot blast on death. Radius damage to the player only --
+## no area system, just one distance check and one take_damage call -- plus the
+## burst that telegraphs what just happened.
+func _explode_volatile() -> void:
+	var layer: Node = get_tree().get_first_node_in_group("effects_layer")
+	if layer != null:
+		DeathBurst.spawn(layer, global_position, Color(1.0, 0.75, 0.2), VOLATILE_RADIUS, 0.3)
+	var target: Node2D = get_tree().get_first_node_in_group("player") as Node2D
+	if target != null and target.has_method("take_damage") \
+			and global_position.distance_to(target.global_position) <= VOLATILE_RADIUS:
+		target.take_damage(VOLATILE_DAMAGE)
 
 
 func _process(delta: float) -> void:

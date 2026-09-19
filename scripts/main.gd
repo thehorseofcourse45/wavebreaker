@@ -158,8 +158,12 @@ func _capture_screenshot() -> void:
 			_waves._intermission_timer.stop()
 			var showcase_box: Node = get_tree().get_first_node_in_group("enemy_container")
 			for showcase: Array in [["bulwark", Vector2(-240, -150)], ["leaper", Vector2(240, -150)],
-					["bulwark", Vector2(-240, 150)], ["leaper", Vector2(240, 150)]]:
+					["bulwark", Vector2(-240, 150)], ["leaper", Vector2(240, 150)],
+					["chaser", Vector2(-140, -260), "shielded"], ["chaser", Vector2(140, 260), "frenzied"],
+					["chaser", Vector2(-240, 0), "volatile"]]:
 				var exhibit: EnemyBase = (load("res://scenes/enemy_%s.tscn" % showcase[0]) as PackedScene).instantiate() as EnemyBase
+				if showcase.size() > 2:
+					exhibit.affix = String(showcase[2])
 				exhibit.position = showcase[1]
 				showcase_box.add_child(exhibit)
 				exhibit.is_dormant = true
