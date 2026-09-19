@@ -558,6 +558,51 @@ func _run(main: Node) -> void:
 	arch_player.velocity = Vector2.ZERO
 	arch_player.health = base_hp
 
+	# -- Dash: burst + i-frames + cooldown, pip on the HUD ----------------------
+	# The player fixture stands clear of cover (right of centre is open floor
+	# to the wall at x=810), so the travel number measures the dash, not a
+	# collision.
+	arch_player.global_position = Vector2(0, 0)
+	arch_player.velocity = Vector2.ZERO
+	arch_player.controls_enabled = true
+	arch_player._invuln_timer = 0.0
+	arch_player._aim_pivot.rotation = 0.0   # facing right: dash direction is deterministic
+	var dash_start: Vector2 = arch_player.global_position
+	if not arch_player.try_dash():
+		failed.append("dash: try_dash refused with a full cooldown available")
+	else:
+		if arch_player._invuln_timer <= 0.0:
+			failed.append("dash: no i-frames came with the dash (%.2f)" % arch_player._invuln_timer)
+		for i in 14:
+			await main.get_tree().physics_frame
+		var dash_travel: float = arch_player.global_position.distance_to(dash_start)
+		if dash_travel < 100.0:
+			failed.append("dash: travelled %.0f px, expected 100+ (900 px/s for 0.16 s)" % dash_travel)
+		if arch_player._dash_cooldown_left <= 0.0:
+			failed.append("dash: the cooldown never started")
+		if arch_player.try_dash():
+			failed.append("dash: a second dash inside the cooldown went through")
+		var dash_ratio_low: float = arch_player.dash_ready_ratio()
+		for i in 40:
+			await main.get_tree().physics_frame
+		var dash_ratio_high: float = arch_player.dash_ready_ratio()
+		if not (dash_ratio_low < 0.99 and dash_ratio_high > dash_ratio_low):
+			failed.append("dash: the readiness ratio did not recover (%.2f -> %.2f)" % [dash_ratio_low, dash_ratio_high])
+	arch_player.controls_enabled = false
+	# The pip: same readiness drives a visible tint on the HUD.
+	var dash_hud: Hud = main.get_node("UI/HUD") as Hud
+	var dash_pip: ColorRect = dash_hud.get_node_or_null("PanelRoot/Panel/DashPip") as ColorRect
+	if dash_pip == null:
+		failed.append("dash: the HUD has no DashPip")
+	else:
+		dash_hud.set_dash_ratio(0.0)
+		var pip_dark: Color = dash_pip.modulate
+		dash_hud.set_dash_ratio(1.0)
+		if dash_pip.modulate == pip_dark:
+			failed.append("dash: the pip did not track the readiness ratio")
+	arch_player.global_position = Vector2.ZERO
+	arch_player.velocity = Vector2.ZERO
+
 	# -- Enemy rounds are hostile: they hurt the player, never their own kind ---
 	# Regression: Bullet.fire() used to reset `hostile` right after BulletPool
 	# set it, so every enemy shot was harmless to the player AND damaged other

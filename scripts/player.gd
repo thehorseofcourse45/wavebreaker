@@ -82,6 +82,15 @@ const BULLET_SPREAD_DEG := 7.0
 @export var invulnerability_time: float = 0.6
 @export var flash_time: float = 0.12
 
+@export_group("Dash")
+## Space: a short burst in the held move direction (facing if idle) with
+## i-frames, on a cooldown. Reuses the SAME i-frame timer take_damage gates
+## on -- there is no second invulnerability flag to fall out of sync, and a
+## dash never SHORTENS standing i-frames (maxf, below).
+@export var dash_speed: float = 900.0
+@export var dash_time: float = 0.16
+@export var dash_cooldown: float = 1.6
+
 ## Shop stats that have no export: flat damage soaked (0..1) and health won per
 ## kill. Both are read where they apply -- take_damage() and Main's kill handler.
 var damage_reduction: float = 0.0
@@ -95,6 +104,11 @@ var controls_enabled: bool = false
 var is_alive: bool = true
 
 var _fire_cooldown: float = 0.0
+## Dash state: ticks in _physics_process; velocity is written every dash tick
+## (move_and_slide still resolves the collisions).
+var _dash_timer: float = 0.0
+var _dash_cooldown_left: float = 0.0
+var _dash_dir: Vector2 = Vector2.ZERO
 ## Pristine bullet_damage from _ready: mutators scale THIS, never the live value.
 var _base_bullet_damage: int = 0
 ## Pristine max_health from _ready -- what a mutator is measured against.
@@ -195,6 +209,8 @@ func respawn(spawn_position: Vector2) -> void:
 	_invuln_timer = 0.0
 	_flash_timer = 0.0
 	_fire_cooldown = 0.0
+	_dash_timer = 0.0
+	_dash_cooldown_left = 0.0
 	visible = true
 	set_deferred("collision_layer", 1)
 	set_deferred("collision_mask", 10)
@@ -208,7 +224,43 @@ func _physics_process(delta: float) -> void:
 	_handle_aiming(delta)
 	if controls_enabled:
 		_handle_firing(delta)
+		if Input.is_action_just_pressed("dash"):
+			try_dash()
+	_update_dash(delta)
 	move_and_slide()
+
+
+## Dash now, if the run allows it (Space routes here; the self-test calls it
+## directly for the same reason it calls fire_charged). Returns whether the
+## dash actually went out.
+func try_dash() -> bool:
+	if not is_alive or not controls_enabled:
+		return false
+	if _dash_cooldown_left > 0.0 or _dash_timer > 0.0:
+		return false
+	var input_dir: Vector2 = Input.get_vector("move_left", "move_right", "move_up", "move_down")
+	_dash_dir = input_dir if input_dir != Vector2.ZERO else Vector2.RIGHT.rotated(_aim_pivot.rotation)
+	_dash_timer = dash_time
+	_dash_cooldown_left = dash_cooldown
+	# i-frames for the whole dash, through the ONE timer take_damage reads.
+	# maxf: a dash never shortens i-frames the player already has.
+	_invuln_timer = maxf(_invuln_timer, dash_time)
+	return true
+
+
+## 0..1 cooldown readiness, for the HUD pip (1 = ready).
+func dash_ready_ratio() -> float:
+	return 1.0 - _dash_cooldown_left / maxf(dash_cooldown, 0.01)
+
+
+func _update_dash(delta: float) -> void:
+	_dash_cooldown_left = maxf(_dash_cooldown_left - delta, 0.0)
+	if _dash_timer <= 0.0:
+		return
+	_dash_timer -= delta
+	# Velocity, never global_position: move_and_slide still resolves walls and
+	# obstacles, so a dash into cover stops instead of tunneling through it.
+	velocity = _dash_dir * dash_speed
 
 
 func _process(delta: float) -> void:

@@ -6,6 +6,9 @@ class_name Hud
 ## Health ratio at or below which the bar starts pulsing, so the player notices
 ## they are about to die without reading a number.
 const LOW_HEALTH_RATIO := 0.25
+## Dash pip colours: bright teal = panic button live, dark violet = recharging.
+const DASH_READY_COLOR := Color("#46e6de")
+const DASH_COOLING_COLOR := Color(0.32, 0.27, 0.42)
 
 @onready var _health_bar: ProgressBar = %HealthBar
 @onready var _health_label: Label = %HealthLabel
@@ -17,6 +20,8 @@ const LOW_HEALTH_RATIO := 0.25
 ## `overlay = 1` (only the edges tint). The bar alone is easy to miss while the
 ## player is looking at the middle of the arena.
 @onready var _low_health: ColorRect = $LowHealth
+## Dash readiness pip, built in _ready beside the health bar.
+var _dash_pip: ColorRect = null
 
 var _pulse_phase: float = 0.0
 
@@ -69,9 +74,25 @@ func set_score(score: int) -> void:
 func set_credits(credits: int) -> void:
 	_credits_label.text = "CREDITS: %d" % credits
 
+## Dash readiness, 0 = just spent, 1 = ready again. Main pushes this every
+## frame while the run is live.
+func set_dash_ratio(ready: float) -> void:
+	if _dash_pip != null:
+		_dash_pip.modulate = DASH_COOLING_COLOR.lerp(DASH_READY_COLOR, clampf(ready, 0.0, 1.0))
+
 func _ready() -> void:
 	var left: PanelContainer = $PanelRoot
 	left.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# Dash pip: one thin bar under the health bar, tinted by set_dash_ratio.
+	var dash_pip := ColorRect.new()
+	dash_pip.name = "DashPip"
+	dash_pip.custom_minimum_size = Vector2(240, 5)
+	dash_pip.color = Color.WHITE
+	dash_pip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	dash_pip.modulate = DASH_READY_COLOR
+	($PanelRoot/Panel as Control).add_child(dash_pip)
+	($PanelRoot/Panel as Control).move_child(dash_pip, 1)
+	_dash_pip = dash_pip
 	var center := PanelContainer.new()
 	center.name = "WaveReadout"
 	add_child(center)

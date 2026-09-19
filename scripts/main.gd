@@ -232,6 +232,7 @@ func _dump_rects(n: Node, depth: int) -> void:
 func _process(delta: float) -> void:
 	if _state == State.PLAYING:
 		_run_time += delta
+		_hud.set_dash_ratio(_player.dash_ready_ratio())
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -662,6 +663,7 @@ func _ensure_input_actions() -> void:
 	_ensure_key_action("move_left", [KEY_A, KEY_LEFT])
 	_ensure_key_action("move_right", [KEY_D, KEY_RIGHT])
 	_ensure_key_action("restart_game", [KEY_R])
+	_ensure_key_action("dash", [KEY_SPACE])
 
 
 func _ensure_key_action(action: StringName, keys: Array) -> void:
