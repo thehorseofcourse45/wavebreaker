@@ -1,0 +1,28 @@
+# Godot
+.godot/
+*.translation
+export_credentials.cfg
+
+# Build output: the game is rebuilt from source, the 100+ MB exports are not source.
+*.exe
+*.pck
+*.console.exe
+build/
+export/
+
+# Local editor tooling (binaries + temp files, not part of the game)
+addons/ziva_agent/
+*.TMP
+*~RF*.TMP
+*.dll
+*.so
+*.dylib
+
+# Screenshot harness output (shot_<mode>.png + its .import)
+shot_*.png
+shot_*.png.import
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+*.swp

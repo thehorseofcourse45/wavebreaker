@@ -1,0 +1,11 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/death_burst.gd" id="1"]
+
+[sub_resource type="CanvasItemMaterial" id="Mat_add"]
+blend_mode = 1
+
+[node name="DeathBurst" type="Node2D"]
+z_index = 20
+material = SubResource("Mat_add")
+script = ExtResource("1")

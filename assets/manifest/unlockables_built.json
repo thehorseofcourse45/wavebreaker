@@ -1,0 +1,26 @@
+{
+ "note": "sha256 of every icon this pipeline wrote; a mismatch means the file was re-sliced, renamed or hand-edited -- re-run the slicer or update this file.  trail_rounds and fast_shop are framed 15% left of centre.",
+ "source": "unlockables_b6c21a.png (1536x1024, 5x4, row-major, square-cropped to 64x64)",
+ "built": {
+  "neon_skin": "e3b62ebc7ddbd4d271e37785a97d3d9bc1b58f6c052b2f72c906abdc411c6434",
+  "crimson_arena": "be4dbf0302434ec414373fa2d7009012a8760c34bc5d852290c1edc0ee825989",
+  "hollow_point": "585f0ae2a4b3b2c58d3bada29938e09e1410fb930e39695bc7bbb2f4daa7528b",
+  "rime_horde": "3cb668ea4ed04185f25186009f31565915437b0e0b207812e55c974be211bfa8",
+  "rim_palette": "f5749d06a51c4be2457b0b86488a108890b224a784bf484f1b3b1fb94ad2b6c9",
+  "trail_rounds": "7e2353f791bd205e77cdf39df387d7ff222dc8840ea8b062e502658142efb68c",
+  "gold_crits": "28722f43d2398687a93a3956b6366cbd24f601db4b2a189d935828c913340496",
+  "streak_banners": "539fd09461e784890ed6cd5fbb46b4af0999402e62a2ff76dfc5e32a0515b291",
+  "war_chest": "0bafa003c1a1d45ffed33e9d35c2f56663f77c1e4fe612da2978c4993b9ebe21",
+  "nightmare": "41990ac62a3f015f347e0c87db917f0a25b925b377749bde5afe4df7fd13b3ea",
+  "glass_cannon": "865d1c1d31a976cf570b74544b0a86ecf1032e2abe4dedac17c81725442c5d51",
+  "boss_rush": "b6f791de0e41c25806b143004e3f2d542e41de231413af5fc2220101004e8650",
+  "black_market": "ee1e71f43e9d8d1408147d6a353eac00f64d45333cf5161c3a30ae6550520cef",
+  "second_wind": "1bd96eae7a6d8f59f54a935fc04e55efb9138cf9ca49db85bf8653eab583c9d4",
+  "overcharge": "5f0f9b4d1b5bf58680bfbf228548189daab55f8f9f2b8d5a1e639b73de42262a",
+  "vault_arena": "d0b829035b83bab60607363c733afb7ef8f87e8ab1496b02bdc73b0faaec34c3",
+  "boss_track_2": "d5d171806d6582e18820f2a51aa3d8386ad79a52b6b0b67aa209ecadef2d98f9",
+  "mid_boss_waves": "6d34a1d64d80feb5706605c2f95a6dcf71837ad3a9d994f4b8d6f15f427c8dce",
+  "fast_shop": "824961a918babe7cc393272163b9403f583d68a7c8167b3f3869ed5f0f49e540",
+  "run_stats": "06d485dc84440213cc767e9491fd037832aff8cf4c1539d688691c8c4b7e4821"
+ }
+}

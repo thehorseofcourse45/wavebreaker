@@ -1,0 +1,14 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/damage_number.gd" id="1"]
+
+[sub_resource type="CanvasItemMaterial" id="Mat_add"]
+blend_mode = 1
+
+[node name="DamageNumber" type="Label"]
+offset_right = 120.0
+offset_bottom = 24.0
+material = SubResource("Mat_add")
+horizontal_alignment = 1
+vertical_alignment = 1
+script = ExtResource("1")

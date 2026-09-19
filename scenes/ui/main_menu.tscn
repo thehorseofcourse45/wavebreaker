@@ -1,0 +1,144 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/main_menu.gd" id="1"]
+
+[node name="MainMenu" type="CanvasLayer"]
+script = ExtResource("1")
+
+[node name="Dim" type="ColorRect" parent="."]
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0.02, 0.02, 0.045, 0.82)
+
+[node name="Center" type="CenterContainer" parent="."]
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="Card" type="PanelContainer" parent="./Center"]
+
+[node name="Margin" type="MarginContainer" parent="./Center/Card"]
+theme_override_constants/margin_left = 48
+theme_override_constants/margin_top = 28
+theme_override_constants/margin_right = 48
+theme_override_constants/margin_bottom = 28
+
+[node name="Column" type="VBoxContainer" parent="./Center/Card/Margin"]
+theme_override_constants/separation = 12
+
+[node name="Title" type="Label" parent="./Center/Card/Margin/Column"]
+theme_override_font_sizes/font_size = 52
+text = "WAVEBREAKER"
+horizontal_alignment = 1
+
+[node name="Subtitle" type="Label" parent="./Center/Card/Margin/Column"]
+theme_override_font_sizes/font_size = 18
+text = "Top-down arena survival - the waves do not stop."
+horizontal_alignment = 1
+modulate = Color(1, 1, 1, 0.7)
+
+[node name="BestLabel" type="Label" parent="./Center/Card/Margin/Column"]
+theme_override_font_sizes/font_size = 20
+text = ""
+horizontal_alignment = 1
+modulate = Color(1, 0.84, 0.4, 1)
+
+[node name="KillsLabel" type="Label" parent="./Center/Card/Margin/Column"]
+theme_override_font_sizes/font_size = 18
+text = ""
+horizontal_alignment = 1
+modulate = Color(1, 1, 1, 0.65)
+
+[node name="StartButton" type="Button" parent="./Center/Card/Margin/Column"]
+custom_minimum_size = Vector2(300, 50)
+size_flags_horizontal = 4
+theme_override_font_sizes/font_size = 26
+text = "START  (Enter)"
+
+[node name="EndlessCheck" type="CheckButton" parent="./Center/Card/Margin/Column"]
+custom_minimum_size = Vector2(300, 36)
+size_flags_horizontal = 4
+theme_override_font_sizes/font_size = 18
+text = "ENDLESS"
+button_pressed = true
+
+[node name="DifficultyLabel" type="Label" parent="./Center/Card/Margin/Column"]
+theme_override_font_sizes/font_size = 16
+text = "DIFFICULTY"
+horizontal_alignment = 1
+modulate = Color(1, 1, 1, 0.65)
+
+[node name="DifficultyRow" type="HBoxContainer" parent="./Center/Card/Margin/Column"]
+size_flags_horizontal = 4
+theme_override_constants/separation = 10
+
+[node name="Mutators" type="HBoxContainer" parent="./Center/Card/Margin/Column"]
+visible = false
+size_flags_horizontal = 4
+theme_override_constants/separation = 12
+
+[node name="GlassCheck" type="CheckButton" parent="./Center/Card/Margin/Column/Mutators"]
+visible = false
+theme_override_font_sizes/font_size = 16
+text = "GLASS CANNON"
+tooltip_text = "50 HP and 1.5x damage, armor cannot be bought."
+
+[node name="BossCheck" type="CheckButton" parent="./Center/Card/Margin/Column/Mutators"]
+visible = false
+theme_override_font_sizes/font_size = 16
+text = "BOSS RUSH"
+tooltip_text = "Every wave is a boss wave."
+
+[node name="Audio" type="VBoxContainer" parent="./Center/Card/Margin/Column"]
+theme_override_constants/separation = 2
+
+[node name="MusicRow" type="HBoxContainer" parent="./Center/Card/Margin/Column/Audio"]
+theme_override_constants/separation = 12
+
+[node name="MusicLabel" type="Label" parent="./Center/Card/Margin/Column/Audio/MusicRow"]
+custom_minimum_size = Vector2(120, 0)
+theme_override_font_sizes/font_size = 18
+text = "MUSIC"
+vertical_alignment = 1
+
+[node name="MusicSlider" type="HSlider" parent="./Center/Card/Margin/Column/Audio/MusicRow"]
+custom_minimum_size = Vector2(380, 24)
+max_value = 1.0
+step = 0.01
+value = 0.4
+
+[node name="SfxRow" type="HBoxContainer" parent="./Center/Card/Margin/Column/Audio"]
+theme_override_constants/separation = 12
+
+[node name="SfxLabel" type="Label" parent="./Center/Card/Margin/Column/Audio/SfxRow"]
+custom_minimum_size = Vector2(120, 0)
+theme_override_font_sizes/font_size = 18
+text = "SOUND FX"
+vertical_alignment = 1
+
+[node name="SfxSlider" type="HSlider" parent="./Center/Card/Margin/Column/Audio/SfxRow"]
+custom_minimum_size = Vector2(380, 24)
+max_value = 1.0
+step = 0.01
+value = 1.0
+
+[node name="ResetButton" type="Button" parent="./Center/Card/Margin/Column"]
+custom_minimum_size = Vector2(300, 40)
+size_flags_horizontal = 4
+theme_override_font_sizes/font_size = 18
+text = "RESET SAVE"
+
+[node name="ResetHint" type="Label" parent="./Center/Card/Margin/Column"]
+theme_override_font_sizes/font_size = 15
+text = ""
+horizontal_alignment = 1
+modulate = Color(1, 0.6, 0.45, 1)
+
+[node name="Controls" type="Label" parent="./Center/Card/Margin/Column"]
+theme_override_font_sizes/font_size = 17
+text = "WASD move  -  mouse aim  -  LMB fire  -  RMB charge shot  -  Esc pause"
+horizontal_alignment = 1
+modulate = Color(1, 1, 1, 0.55)

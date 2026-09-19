@@ -1,0 +1,25 @@
+[gd_scene load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://scripts/enemy_tank.gd" id="1"]
+[ext_resource type="PackedScene" path="res://scenes/enemy_base.tscn" id="2"]
+
+[sub_resource type="CircleShape2D" id="CircleShape2D_tank"]
+radius = 22.0
+
+[node name="Enemy" instance=ExtResource("2")]
+script = ExtResource("1")
+max_health = 90
+contact_damage = 16
+move_speed = 55.0
+score_value = 30
+knockback_resist = 0.6
+player_knockback = 520.0
+contact_cooldown = 0.9
+separation_radius = 64.0
+
+[node name="Body" parent="."]
+color = Color(0.6, 0.12, 0.15, 1)
+polygon = PackedVector2Array(24, 0, 15, -10, 8, -19, -8, -19, -15, -10, -24, 0, -24, 15, -10, 19, -8, 19, 8, 24, 0, 15, 10, 8, 19)
+
+[node name="CollisionShape2D" parent="."]
+shape = SubResource("CircleShape2D_tank")
