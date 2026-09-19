@@ -11,9 +11,11 @@ class_name MainMenu
 signal start_pressed
 signal endless_toggled(enabled: bool)
 signal difficulty_changed(id: String)
-## Run mutators (unlockable-gated toggles): glass cannon and boss rush. One signal
-## for both, because Main only ever needs the pair.
-signal mutators_changed(glass_cannon: bool, boss_rush: bool)
+## Run mutators: glass cannon and boss rush are unlockable-gated; fog,
+## elite_storm and no_shop are always available. One signal for all five, because
+## Main only ever needs the set.
+signal mutators_changed(glass_cannon: bool, boss_rush: bool, fog: bool,
+		elite_storm: bool, no_shop: bool)
 
 const Storage := preload("res://scripts/storage.gd")
 ## A second click inside this window is the confirmation that wipes the records.
@@ -28,6 +30,9 @@ const RESET_CONFIRM_WINDOW := 4.0
 @onready var _mutators_row: HBoxContainer = $Center/Card/Margin/Column/Mutators
 @onready var _glass_check: CheckButton = $Center/Card/Margin/Column/Mutators/GlassCheck
 @onready var _boss_check: CheckButton = $Center/Card/Margin/Column/Mutators/BossCheck
+@onready var _fog_check: CheckButton = $Center/Card/Margin/Column/Mutators/FogCheck
+@onready var _elite_check: CheckButton = $Center/Card/Margin/Column/Mutators/EliteCheck
+@onready var _no_shop_check: CheckButton = $Center/Card/Margin/Column/Mutators/NoShopCheck
 @onready var _music_slider: HSlider = $Center/Card/Margin/Column/Audio/MusicRow/MusicSlider
 @onready var _sfx_slider: HSlider = $Center/Card/Margin/Column/Audio/SfxRow/SfxSlider
 @onready var _reset_button: Button = $Center/Card/Margin/Column/ResetButton
@@ -62,6 +67,9 @@ func _ready() -> void:
 	_endless_check.toggled.connect(_on_endless_toggled)
 	_glass_check.toggled.connect(_on_mutator_toggled)
 	_boss_check.toggled.connect(_on_mutator_toggled)
+	_fog_check.toggled.connect(_on_mutator_toggled)
+	_elite_check.toggled.connect(_on_mutator_toggled)
+	_no_shop_check.toggled.connect(_on_mutator_toggled)
 	# Sliders write straight through to AudioManager, which owns the save key.
 	_music_slider.value_changed.connect(AudioManager.set_music_volume)
 	_sfx_slider.value_changed.connect(AudioManager.set_sfx_volume)
@@ -153,18 +161,23 @@ func _on_endless_toggled(enabled: bool) -> void:
 
 # --------------------------------------------------------------- mutators ---
 
-## Called by Main on boot and on every menu re-entry: a toggle appears only once
-## its unlockable is earned, and the row hides itself while neither is.
-func refresh_run_options(glass_cannon: bool, boss_rush: bool) -> void:
+## Called by Main on boot and on every menu re-entry. Glass cannon and boss rush
+## appear only once their unlockable is earned; fog / elite storm / no shop are
+## always shown. The row is visible whenever any toggle is.
+func refresh_run_options(glass_cannon: bool, boss_rush: bool, fog: bool = false,
+		elite_storm: bool = false, no_shop: bool = false) -> void:
 	var glass_open: bool = Unlockables.is_unlocked("glass_cannon")
 	var rush_open: bool = Unlockables.is_unlocked("boss_rush")
 	_glass_check.visible = glass_open
 	_boss_check.visible = rush_open
-	_mutators_row.visible = glass_open or rush_open
+	_mutators_row.visible = true
 	# Reflecting a SAVED preference must not re-write it (same rule as ENDLESS),
 	# and a toggle that is hidden must never report as enabled.
 	_glass_check.set_pressed_no_signal(glass_open and glass_cannon)
 	_boss_check.set_pressed_no_signal(rush_open and boss_rush)
+	_fog_check.set_pressed_no_signal(fog)
+	_elite_check.set_pressed_no_signal(elite_storm)
+	_no_shop_check.set_pressed_no_signal(no_shop)
 
 
 ## The menu owns these preferences (it is the only writer), so a toggle writes the
@@ -172,7 +185,12 @@ func refresh_run_options(glass_cannon: bool, boss_rush: bool) -> void:
 func _on_mutator_toggled(_pressed: bool) -> void:
 	Storage.set_value("glass_cannon", _glass_check.button_pressed)
 	Storage.set_value("boss_rush", _boss_check.button_pressed)
-	mutators_changed.emit(_glass_check.button_pressed, _boss_check.button_pressed)
+	Storage.set_value("fog", _fog_check.button_pressed)
+	Storage.set_value("elite_storm", _elite_check.button_pressed)
+	Storage.set_value("no_shop", _no_shop_check.button_pressed)
+	mutators_changed.emit(_glass_check.button_pressed, _boss_check.button_pressed,
+			_fog_check.button_pressed, _elite_check.button_pressed,
+			_no_shop_check.button_pressed)
 
 
 # ------------------------------------------------------------------ reset ---
@@ -192,7 +210,8 @@ func _on_reset_pressed() -> void:
 	Unlockables.refresh()
 	set_difficulty(String(Storage.get_value("difficulty", "normal")))
 	# The toggles are preferences and survive, but their unlockables are gone.
-	refresh_run_options(_glass_check.button_pressed, _boss_check.button_pressed)
+	refresh_run_options(_glass_check.button_pressed, _boss_check.button_pressed,
+			_fog_check.button_pressed, _elite_check.button_pressed, _no_shop_check.button_pressed)
 	_disarm_reset()
 	refresh_stats()
 

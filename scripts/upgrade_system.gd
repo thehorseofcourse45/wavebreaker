@@ -22,6 +22,9 @@ const DEFS: Array[Dictionary] = [
 	{"id": "recoil",    "label": "Recoil -25%",        "base_cost": 30,  "max_level": 4},
 	{"id": "pierce",    "label": "Pierce +1 enemy",    "base_cost": 95,  "max_level": 3},
 	{"id": "charge",    "label": "Charge shot (RMB)",  "base_cost": 160, "max_level": 1},
+	# The one HEALING row: the "no shop" mutator keeps exactly this one open, so a
+	# run with it can still buy health and nothing else.
+	{"id": "repair",    "label": "Field repair (full)", "base_cost": 70,  "max_level": 1},
 ]
 
 var levels: Dictionary = {}   # id -> times purchased
@@ -97,5 +100,6 @@ func buy(id: String, credits: int, player: Player) -> Dictionary:
 		"recoil":     player.fire_recoil *= 0.75
 		"pierce":     player.pierce_count += 1
 		"charge":     player.charge_unlocked = true
+		"repair":     player.heal(player.max_health)
 	upgraded.emit(id, levels[id])
 	return {"spent": spent, "ok": true, "reason": ""}

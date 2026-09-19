@@ -2106,6 +2106,48 @@ func _run(main: Node) -> void:
 		failed.append("unlockables: the menu card wants %.0f px of a 720 px window with the mutators shown" % menu_card.get_combined_minimum_size().y)
 	main._menu.refresh_run_options(false, false)
 
+	# -- Run mutators: fog, elite storm, no shop --------------------------------
+	# Each is applied at run start by Main (the menu only owns the preference).
+	# One observable per mutator, read through the real apply path.
+	_set_unlock_flags({})
+	main._state = main.State.MENU
+	main._fog = true
+	main._elite_storm = true
+	main._no_shop = true
+	main.start_game()
+	wm.stop()
+	var mut_player: Player = main.get_node("World/Player") as Player
+	if mut_player._torch == null or not is_equal_approx(float(mut_player._torch.get("range")), Player.TORCH_RANGE * 0.5):
+		failed.append("mutators: FOG did not halve the torch range (%s)" % str(mut_player._torch.get("range") if mut_player._torch != null else "no torch"))
+	if not wm.force_affixes:
+		failed.append("mutators: ELITE STORM never reached the wave manager")
+	# A spawn through the real path carries an affix under elite storm.
+	var mut_container: Node = main.get_node("World/EnemyContainer")
+	var mut_before: Array[Node] = mut_container.get_children()
+	var mut_telegraph_was: float = wm.spawn_telegraph_time
+	wm.spawn_telegraph_time = 0.0
+	wm._spawn_enemy("chaser")
+	wm.spawn_telegraph_time = mut_telegraph_was
+	var mut_enemy: EnemyBase = _new_container_child(mut_container, mut_before) as EnemyBase
+	if mut_enemy == null or mut_enemy.affix == "":
+		failed.append("mutators: ELITE STORM spawned an enemy with no affix")
+	if mut_enemy != null:
+		mut_enemy.queue_free()
+	# no_shop: a non-healing row is LOCKED, the healing row is not.
+	main._shop.refresh(main._upgrades, 999)
+	if (main._shop._rows["damage"]["btn"] as Button).text != "LOCKED":
+		failed.append("mutators: NO SHOP left the damage row buyable (\"%s\")" % (main._shop._rows["damage"]["btn"] as Button).text)
+	if (main._shop._rows["repair"]["btn"] as Button).text == "LOCKED":
+		failed.append("mutators: NO SHOP also locked the healing row")
+	# Back to a normal run for everything that follows.
+	mut_player.set_torch_scale(1.0)
+	main._state = main.State.MENU
+	main._fog = false
+	main._elite_storm = false
+	main._no_shop = false
+	wm.force_affixes = false
+	main._menu.refresh_run_options(false, false)
+
 	# vault_arena: arena 3 exists, stays shut until earned, then swaps in with its
 	# own baked navmesh (the new cover has to be pathable, or enemies beeline).
 	if main.ARENA_SCENES.size() < 3:
@@ -2476,6 +2518,7 @@ func _player_stat_snapshot(p: Node) -> Dictionary:
 		"kill_heal": p.kill_heal,
 		"pierce_count": p.pierce_count,
 		"charge_unlocked": p.charge_unlocked,
+		"health": p.health,
 	}
 
 

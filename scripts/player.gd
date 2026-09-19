@@ -194,6 +194,13 @@ func _setup_lighting() -> void:
 	_torch = LitLighting.add_point_light(self, TORCH_COLOR, TORCH_RANGE, TORCH_ENERGY, true)
 
 
+## "fog" run mutator: scale the torch's reach. 1.0 restores the full range, so a
+## run start always sets it (a fog run followed by a normal one cannot keep fog).
+func set_torch_scale(scale: float) -> void:
+	if _torch != null:
+		_torch.set("range", TORCH_RANGE * clampf(scale, 0.05, 2.0))
+
+
 ## Unlockable "neon_skin". Body + gun only: every other colour on the player is
 ## owned by the damage/blink flash in _update_damage_visuals().
 func _apply_unlockable_skin() -> void:

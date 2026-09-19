@@ -64,6 +64,9 @@ var _second_wind_used: bool = false
 ## Run mutators (unlockable-gated menu toggles), seeded from the save in _enter_menu.
 var _glass_cannon: bool = false
 var _boss_rush: bool = false
+var _fog: bool = false
+var _elite_storm: bool = false
+var _no_shop: bool = false
 ## Earned by now, announced once the shop closes so the callout does not fight
 ## the "WAVE CLEARED" banner.
 var _fresh_unlocks: Array[String] = []
@@ -302,9 +305,19 @@ func start_game() -> void:
 	# sell armor this run, which is why the block list is set here and not in the
 	# shop: one place owns "what this run allows".
 	_waves.boss_rush = _boss_rush
+	# fog: the player owns its torch, so the run asks for the scaled reach.
+	_player.set_torch_scale(0.5 if _fog else 1.0)
+	# elite_storm: every spawn rolls an affix, chance table ignored.
+	_waves.force_affixes = _elite_storm
 	if _glass_cannon:
 		_player.apply_glass_cannon()
 		_upgrades.block("armor")
+	# no_shop: every row but the healing one is refused, through the same
+	# `blocked` list glass cannon uses for armor.
+	if _no_shop:
+		for d: Dictionary in _upgrades.DEFS:
+			if String(d.id) != "repair":
+				_upgrades.block(String(d.id))
 	_waves.shop_pause_enabled = true
 	_shop.build(_upgrades)
 	_shop.hide_shop()
@@ -328,7 +341,11 @@ func _enter_menu() -> void:
 	_waves.difficulty = String(Storage.get_value("difficulty", "normal"))
 	_glass_cannon = bool(Storage.get_value("glass_cannon", false))
 	_boss_rush = bool(Storage.get_value("boss_rush", false))
+	_fog = bool(Storage.get_value("fog", false))
+	_elite_storm = bool(Storage.get_value("elite_storm", false))
+	_no_shop = bool(Storage.get_value("no_shop", false))
 	_waves.boss_rush = _boss_rush
+	_waves.force_affixes = _elite_storm
 	_player.controls_enabled = false
 	_hud.visible = false
 	_banner.visible = false
@@ -336,7 +353,7 @@ func _enter_menu() -> void:
 	_menu.visible = true
 	_menu.set_scripted_waves(_waves.wave_table.size())
 	_menu.set_difficulty(_waves.difficulty)
-	_menu.refresh_run_options(_glass_cannon, _boss_rush)
+	_menu.refresh_run_options(_glass_cannon, _boss_rush, _fog, _elite_storm, _no_shop)
 	_menu.sync_audio_sliders()   # the pause menu moves the same volumes
 	_menu.refresh_stats()   # a record set this session shows up without a restart
 	_shop.hide_shop()
@@ -354,11 +371,17 @@ func _on_difficulty_changed(id: String) -> void:
 
 
 ## The menu owns the mutator toggles (it writes them, like ENDLESS); Main only
-## forwards them to the run. boss_rush applies at once -- it is read per wave.
-func _on_mutators_changed(glass_cannon: bool, boss_rush: bool) -> void:
+## forwards them to the run. boss_rush/elite_storm apply at once -- they are read
+## per wave/spawn; fog/no_shop apply at the next run start.
+func _on_mutators_changed(glass_cannon: bool, boss_rush: bool, fog: bool,
+		elite_storm: bool, no_shop: bool) -> void:
 	_glass_cannon = glass_cannon
 	_boss_rush = boss_rush
+	_fog = fog
+	_elite_storm = elite_storm
+	_no_shop = no_shop
 	_waves.boss_rush = boss_rush
+	_waves.force_affixes = elite_storm
 
 
 func _on_player_died() -> void:

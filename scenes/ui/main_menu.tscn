@@ -92,6 +92,21 @@ theme_override_font_sizes/font_size = 16
 text = "BOSS RUSH"
 tooltip_text = "Every wave is a boss wave."
 
+[node name="FogCheck" type="CheckButton" parent="./Center/Card/Margin/Column/Mutators"]
+theme_override_font_sizes/font_size = 16
+text = "FOG"
+tooltip_text = "The torch reaches half as far."
+
+[node name="EliteCheck" type="CheckButton" parent="./Center/Card/Margin/Column/Mutators"]
+theme_override_font_sizes/font_size = 16
+text = "ELITE STORM"
+tooltip_text = "Every enemy rolls an affix."
+
+[node name="NoShopCheck" type="CheckButton" parent="./Center/Card/Margin/Column/Mutators"]
+theme_override_font_sizes/font_size = 16
+text = "NO SHOP"
+tooltip_text = "Credits only buy healing."
+
 [node name="Audio" type="VBoxContainer" parent="./Center/Card/Margin/Column"]
 theme_override_constants/separation = 2
 
