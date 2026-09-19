@@ -31,6 +31,12 @@ signal died(enemy: EnemyBase)
 @export var contact_cooldown: float = 0.6
 @export var flash_time: float = 0.09
 
+@export_group("Mitigation")
+## Multiplier applied to incoming damage (1 = none). The bulwark's aura sets
+## this on nearby enemies; nothing else writes it. A hit always deals at
+## least 1 so a mitigated enemy can still be killed.
+@export var damage_taken_mult: float = 1.0
+
 var health: int = max_health
 var is_dead: bool = false
 var is_dormant: bool = false  # set on game over: freezes the enemy in place
@@ -217,10 +223,11 @@ func _check_player_contact() -> void:
 func take_damage(amount: int, knockback: Vector2 = Vector2.ZERO) -> void:
 	if is_dead or amount <= 0:
 		return
-	health -= amount
+	var dealt: int = maxi(1, int(round(float(amount) * damage_taken_mult)))
+	health -= dealt
 	_flash_timer = flash_time
 	_knockback_vel += knockback * (1.0 - clampf(knockback_resist, 0.0, 1.0))
-	damaged.emit(amount)
+	damaged.emit(dealt)
 	if health <= 0:
 		_die()
 

@@ -17,12 +17,12 @@ signal game_over
 
 @export_group("Waves (data-driven)")
 @export var wave_table: Array[Dictionary] = [
-	{"chaser": 4, "rusher": 0, "tank": 0, "weaver": 0, "orbiter": 0, "shooter": 0, "splitter": 0, "elite": 0, "hp_mult": 1.0, "speed_mult": 1.0},
-	{"chaser": 5, "rusher": 3, "tank": 0, "weaver": 2, "orbiter": 0, "shooter": 0, "splitter": 0, "elite": 0, "hp_mult": 1.05, "speed_mult": 1.0},
-	{"chaser": 6, "rusher": 4, "tank": 1, "weaver": 2, "orbiter": 1, "shooter": 1, "splitter": 0, "elite": 0, "hp_mult": 1.1, "speed_mult": 1.02},
-	{"chaser": 6, "rusher": 6, "tank": 2, "weaver": 3, "orbiter": 2, "shooter": 1, "splitter": 1, "elite": 0, "hp_mult": 1.2, "speed_mult": 1.05},
-	{"chaser": 8, "rusher": 8, "tank": 3, "weaver": 4, "orbiter": 3, "shooter": 2, "splitter": 2, "elite": 0, "hp_mult": 1.3, "speed_mult": 1.08},
-	{"chaser": 10, "rusher": 10, "tank": 4, "weaver": 5, "orbiter": 4, "shooter": 3, "splitter": 2, "elite": 1, "hp_mult": 1.45, "speed_mult": 1.1},
+	{"chaser": 4, "rusher": 0, "tank": 0, "weaver": 0, "orbiter": 0, "shooter": 0, "splitter": 0, "elite": 0, "leaper": 0, "bulwark": 0, "hp_mult": 1.0, "speed_mult": 1.0},
+	{"chaser": 5, "rusher": 3, "tank": 0, "weaver": 2, "orbiter": 0, "shooter": 0, "splitter": 0, "elite": 0, "leaper": 2, "bulwark": 0, "hp_mult": 1.05, "speed_mult": 1.0},
+	{"chaser": 6, "rusher": 4, "tank": 1, "weaver": 2, "orbiter": 1, "shooter": 1, "splitter": 0, "elite": 0, "leaper": 2, "bulwark": 1, "hp_mult": 1.1, "speed_mult": 1.02},
+	{"chaser": 6, "rusher": 6, "tank": 2, "weaver": 3, "orbiter": 2, "shooter": 1, "splitter": 1, "elite": 0, "leaper": 3, "bulwark": 1, "hp_mult": 1.2, "speed_mult": 1.05},
+	{"chaser": 8, "rusher": 8, "tank": 3, "weaver": 4, "orbiter": 3, "shooter": 2, "splitter": 2, "elite": 0, "leaper": 3, "bulwark": 2, "hp_mult": 1.3, "speed_mult": 1.08},
+	{"chaser": 10, "rusher": 10, "tank": 4, "weaver": 5, "orbiter": 4, "shooter": 3, "splitter": 2, "elite": 1, "leaper": 4, "bulwark": 2, "hp_mult": 1.45, "speed_mult": 1.1},
 ]
 
 @export_group("Pacing")
@@ -103,6 +103,8 @@ const HARD_ARENA_SPEED := 1.10
 @export var shooter_scene: PackedScene = preload("res://scenes/enemy_shooter.tscn")
 @export var splitter_scene: PackedScene = preload("res://scenes/enemy_splitter.tscn")
 @export var elite_scene: PackedScene = preload("res://scenes/enemy_elite.tscn")
+@export var bulwark_scene: PackedScene = preload("res://scenes/enemy_bulwark.tscn")
+@export var leaper_scene: PackedScene = preload("res://scenes/enemy_leaper.tscn")
 
 var current_wave: int = 0
 var is_running: bool = false
@@ -198,7 +200,8 @@ func _start_wave(wave_number: int) -> void:
 	_spawn_queue.clear()
 	for spec: Array in [["chaser", "chaser"], ["rusher", "rusher"], ["tank", "tank"],
 			["weaver", "weaver"], ["orbiter", "orbiter"], ["shooter", "shooter"],
-			["splitter", "splitter"], ["elite", "elite"], ["boss", "boss"]]:
+			["splitter", "splitter"], ["elite", "elite"], ["boss", "boss"],
+			["bulwark", "bulwark"], ["leaper", "leaper"]]:
 		for i: int in int(comp.get(spec[0], 0)):
 			_spawn_queue.append(String(spec[1]))
 	_spawn_queue.shuffle()
@@ -257,7 +260,8 @@ func _composition_for_wave(wave_number: int) -> Dictionary:
 		# The boss IS the wave: normal scaling for its stat multipliers, but the
 		# escort is trimmed to a handful of chasers so it never reads as a swarm.
 		var boss_comp: Dictionary = _base_composition(wave_number)
-		for key: String in ["rusher", "tank", "weaver", "orbiter", "shooter", "splitter", "elite"]:
+		for key: String in ["rusher", "tank", "weaver", "orbiter", "shooter", "splitter",
+				"elite", "bulwark", "leaper"]:
 			boss_comp[key] = 0
 		boss_comp["chaser"] = boss_escort_chasers
 		boss_comp["boss"] = boss_count_for_wave(wave_number)
@@ -280,6 +284,10 @@ func _base_composition(wave_number: int) -> Dictionary:
 		"shooter": int(base.get("shooter", 2)) + extra,
 		"splitter": int(base.get("splitter", 1)) + extra,
 		"elite": int(base.get("elite", 1)) + extra,
+		"leaper": int(base.get("leaper", 3)) + extra,
+		# One more bulwark only every 3 waves: an aura carrier needs presence,
+		# not count -- its mitigation does not stack with its own kind.
+		"bulwark": int(base.get("bulwark", 1)) + (extra / 3),
 		"hp_mult": float(base.get("hp_mult", 1.4)) + extra * hp_growth_per_wave,
 		"speed_mult": minf(float(base.get("speed_mult", 1.1)) + extra * speed_growth_per_wave, max_speed_mult),
 	}
@@ -322,6 +330,10 @@ func _spawn_enemy(type_name: String) -> void:
 			scene = splitter_scene
 		"elite":
 			scene = elite_scene
+		"bulwark":
+			scene = bulwark_scene
+		"leaper":
+			scene = leaper_scene
 		"boss":
 			scene = boss_scene
 	var enemy: EnemyBase = scene.instantiate() as EnemyBase

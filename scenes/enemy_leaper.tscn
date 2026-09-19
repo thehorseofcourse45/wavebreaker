@@ -1,0 +1,22 @@
+[gd_scene load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://scripts/enemy_leaper.gd" id="1"]
+[ext_resource type="PackedScene" path="res://scenes/enemy_base.tscn" id="2"]
+
+[sub_resource type="CircleShape2D" id="CircleShape2D_leaper"]
+radius = 12.0
+
+[node name="Enemy" instance=ExtResource("2")]
+script = ExtResource("1")
+max_health = 26
+contact_damage = 8
+move_speed = 120.0
+score_value = 20
+contact_cooldown = 0.5
+
+[node name="Body" parent="."]
+color = Color(0.35, 1, 0.5, 1)
+polygon = PackedVector2Array(0, -18, 9, 0, 0, 18, -9, 0)
+
+[node name="CollisionShape2D" parent="."]
+shape = SubResource("CircleShape2D_leaper")

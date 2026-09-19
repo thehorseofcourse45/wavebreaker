@@ -148,6 +148,22 @@ func _capture_screenshot() -> void:
 			start_game()
 			_switch_arena(2)
 			settle = 12.0
+		"showcase":
+			# New-archetype exhibit: dormant bulwarks and leapers at fixed offsets
+			# around the player, so their bodies and halos are on screen at
+			# deterministic positions (a run shot only ever shows wave 1, and a
+			# live wave shuffles spawn order).
+			start_game()
+			_waves.stop()
+			_waves._intermission_timer.stop()
+			var showcase_box: Node = get_tree().get_first_node_in_group("enemy_container")
+			for showcase: Array in [["bulwark", Vector2(-240, -150)], ["leaper", Vector2(240, -150)],
+					["bulwark", Vector2(-240, 150)], ["leaper", Vector2(240, 150)]]:
+				var exhibit: EnemyBase = (load("res://scenes/enemy_%s.tscn" % showcase[0]) as PackedScene).instantiate() as EnemyBase
+				exhibit.position = showcase[1]
+				showcase_box.add_child(exhibit)
+				exhibit.is_dormant = true
+			settle = 3.0
 		_:
 			pass
 	await get_tree().create_timer(settle).timeout

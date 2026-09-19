@@ -78,15 +78,27 @@ func _run(main: Node) -> void:
 	var comp1: Dictionary = wm._composition_for_wave(1)
 	if not (comp1.has("weaver") and comp1.has("elite") and comp1.has("shooter")):
 		failed.append("wave_table lacks new enemy keys")
+	# The two new archetypes enter the authored table and survive into the
+	# procedural stretch (a key only in the table is a wave that never spawns).
+	var comp2: Dictionary = wm._composition_for_wave(2)
+	if int(comp2.get("leaper", 0)) < 1:
+		failed.append("wave 2 should field leapers")
+	var comp3: Dictionary = wm._composition_for_wave(3)
+	if int(comp3.get("bulwark", 0)) < 1:
+		failed.append("wave 3 should field a bulwark")
 	var comp6: Dictionary = wm._composition_for_wave(6)
 	if int(comp6["elite"]) < 1:
 		failed.append("wave 6 should include at least one elite")
+	if int(comp6.get("bulwark", 0)) < 1 or int(comp6.get("leaper", 0)) < 1:
+		failed.append("wave 6 lost the new archetypes")
 	# procedural stretch should grow: wave 11's elite count > wave 6's
 	# (wave 10 is a BOSS wave now, so it carries no elite by design -- compare
 	# against the next ordinary procedural wave instead.)
 	var comp10: Dictionary = wm._composition_for_wave(11)
 	if int(comp10["elite"]) < int(comp6["elite"]):
 		failed.append("procedural waves should at least keep elite count")
+	if int(comp10.get("bulwark", 0)) < 1 or int(comp10.get("leaper", 0)) < 1:
+		failed.append("procedural waves lost the new archetypes")
 
 	# -- Splitter: pair spawns on death ---------------------------------------
 	var wm_split_count_before: int = wm._alive
@@ -279,7 +291,8 @@ func _run(main: Node) -> void:
 	# -- Enemy scenes have valid bodies + scripts -----------------------------
 	for scene_path in ["res://scenes/enemy_weaver.tscn", "res://scenes/enemy_orbiter.tscn",
 			"res://scenes/enemy_shooter.tscn", "res://scenes/enemy_splitter.tscn",
-			"res://scenes/enemy_elite.tscn", "res://scenes/enemy_mini.tscn"]:
+			"res://scenes/enemy_elite.tscn", "res://scenes/enemy_mini.tscn",
+			"res://scenes/enemy_bulwark.tscn", "res://scenes/enemy_leaper.tscn"]:
 		var ps: PackedScene = load(scene_path)
 		if ps == null:
 			failed.append("scene failed to load: %s" % scene_path)
@@ -301,6 +314,71 @@ func _run(main: Node) -> void:
 			failed.append("%s: rim outline does not match its body polygon (%d vs %d)" % [scene_path, e_rim.points.size(), e_body.polygon.size()])
 		main.remove_child(e)
 		e.free()
+
+	# -- New archetypes: bulwark aura, leaper burst movement -------------------
+	# Both must be real enemies (group + halo), must actually close on the
+	# player, and the bulwark's aura must be a write through the shared
+	# take_damage() path that leaves when it leaves.
+	var arch_player: Node2D = main.get_node("World/Player")
+	var bulwark: Node = load("res://scenes/enemy_bulwark.tscn").instantiate()
+	bulwark.position = Vector2(-420, -320)
+	wm._enemy_container.add_child(bulwark)
+	var leaper: Node = load("res://scenes/enemy_leaper.tscn").instantiate()
+	leaper.position = Vector2(-420, 340)
+	wm._enemy_container.add_child(leaper)
+	await main.get_tree().physics_frame
+	if not bulwark.is_in_group("enemies"):
+		failed.append("bulwark: not in the enemies group")
+	if not leaper.is_in_group("enemies"):
+		failed.append("leaper: not in the enemies group")
+	if not _has_lit_halo(bulwark):
+		failed.append("bulwark: no LitPointLight2D halo (invisible in a dark arena)")
+	if not _has_lit_halo(leaper):
+		failed.append("leaper: no LitPointLight2D halo (invisible in a dark arena)")
+	# Movement: both start >500 px out; 40 physics frames (~0.66 s) at their
+	# speeds closes 25-100 px -- strictly toward the player, whatever their
+	# state machines did in between.
+	var bulwark_start: float = bulwark.global_position.distance_to(arch_player.global_position)
+	var leaper_start: float = leaper.global_position.distance_to(arch_player.global_position)
+	for i in 40:
+		await main.get_tree().physics_frame
+	if bulwark.global_position.distance_to(arch_player.global_position) >= bulwark_start:
+		failed.append("bulwark: never closed on the player (%.0f px)" % bulwark.global_position.distance_to(arch_player.global_position))
+	if leaper.global_position.distance_to(arch_player.global_position) >= leaper_start:
+		failed.append("leaper: never closed on the player (%.0f px)" % leaper.global_position.distance_to(arch_player.global_position))
+	# Aura: in range -> mult < 1 and damage is actually mitigated; out of
+	# range -> back to 1; freed while covering -> back to 1. The ward is a TANK:
+	# 90 hp, so the 55-damage probe cannot kill it mid-probe and free the node
+	# (the suite aborts on a freed access, hiding everything after it).
+	var ward: Node = load("res://scenes/enemy_tank.tscn").instantiate()
+	ward.position = Vector2(-350, -320)   # ~70 px from the bulwark: inside the aura
+	ward.is_dormant = true
+	wm._enemy_container.add_child(ward)
+	for i in 5:
+		await main.get_tree().physics_frame
+	if ward.damage_taken_mult >= 1.0:
+		failed.append("bulwark: neighbour inside the aura kept damage_taken_mult %.2f" % ward.damage_taken_mult)
+	else:
+		var ward_hp: int = ward.health
+		ward.take_damage(100)
+		if ward_hp - ward.health != 55:
+			failed.append("bulwark: 100 damage through the aura moved health by %d, expected 55" % (ward_hp - ward.health))
+	ward.position = Vector2(0, 560)   # far outside the aura
+	for i in 5:
+		await main.get_tree().physics_frame
+	if not is_equal_approx(ward.damage_taken_mult, 1.0):
+		failed.append("bulwark: neighbour out of range kept the aura mult (%.2f)" % ward.damage_taken_mult)
+	ward.position = Vector2(-350, -320)   # back inside, then kill the bulwark under it
+	for i in 5:
+		await main.get_tree().physics_frame
+	if ward.damage_taken_mult >= 1.0:
+		failed.append("bulwark: aura never re-engaged after the neighbour returned")
+	bulwark.queue_free()
+	await main.get_tree().process_frame
+	if not is_equal_approx(ward.damage_taken_mult, 1.0):
+		failed.append("bulwark: the aura outlived the bulwark (mult %.2f)" % ward.damage_taken_mult)
+	ward.queue_free()
+	leaper.queue_free()
 
 	# -- Enemy rounds are hostile: they hurt the player, never their own kind ---
 	# Regression: Bullet.fire() used to reset `hostile` right after BulletPool
@@ -795,6 +873,8 @@ func _run(main: Node) -> void:
 		failed.append("boss: boss_count is %d - the wave is supposed to send a pair" % wm.boss_count)
 	if int(boss_comp.get("elite", 0)) != 0 or int(boss_comp.get("tank", 0)) != 0:
 		failed.append("boss: wave 10 should be the bosses plus a small escort, not a swarm")
+	if int(boss_comp.get("bulwark", 0)) != 0 or int(boss_comp.get("leaper", 0)) != 0:
+		failed.append("boss: the new archetypes escort the boss wave (they were zeroed for a reason)")
 	if int(wm._composition_for_wave(11).get("boss", 0)) != 0:
 		failed.append("boss: the boss leaked into wave 11")
 
@@ -1960,6 +2040,15 @@ func _new_container_child(container: Node, before: Array[Node]) -> Node:
 		if not before.has(child):
 			return child
 	return null
+
+
+## Does this enemy carry its own Lit halo light? (The one thing that makes a
+## body readable in a dark arena before the player's torch reaches it.)
+func _has_lit_halo(e: Node) -> bool:
+	for child: Node in e.get_children():
+		if child is LitPointLight2D:
+			return true
+	return false
 
 
 ## Everything a shop upgrade can move, in one dict -- the DEFS sweep compares it
