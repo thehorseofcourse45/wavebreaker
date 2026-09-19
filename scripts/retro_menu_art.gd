@@ -4,6 +4,9 @@ class_name RetroMenuArt
 ## CARD_TITLE is what the menu card actually shows: the game's name is drawn into the
 ## poster above it (see _draw), so the card is a call to action, not the title.
 const CARD_TITLE := "ENTER THE ARENA"
+## One source for the game version. Drawn once, into the poster's strap line, and
+## mirrored into export_presets.cfg's product_version for the Windows build.
+const VERSION := "1.0.0"
 ## Poster title: one big line when the name fits the 570 px column, wrapped when it does
 ## not. The name itself has one source -- project.godot's config/name (which also sets the
 ## window title).
@@ -31,6 +34,12 @@ static func title_lines(raw: String) -> PackedStringArray:
 	if current != "":
 		lines.append(current)
 	return lines
+
+## The poster's strap line. Extracted from _draw so the version is assertable
+## and there is exactly one place the string is built.
+static func strap_text() -> String:
+	return "A R C A D E   S Y S T E M   /   0 1   /   v%s" % VERSION
+
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -71,7 +80,7 @@ func _draw() -> void:
 		baseline += TITLE_SIZE * 1.05
 	draw_string(_font, Vector2(58, 641), "OUTLAST THE NIGHT.", HORIZONTAL_ALIGNMENT_LEFT, -1, 22, Color("#f3eaff"))
 	draw_string(_font, Vector2(58, 670), "ONE ARENA. ENDLESS WAVES.", HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color("#9f91b8"))
-	draw_string(_font, Vector2(720, 57), "A R C A D E   S Y S T E M   /   0 1", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color("#827794"))
+	draw_string(_font, Vector2(720, 57), strap_text(), HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color("#827794"))
 
 func _style_console() -> void:
 	var menu: CanvasLayer = get_parent()

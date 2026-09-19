@@ -1,0 +1,70 @@
+# Wavebreaker
+
+A top-down twin-stick arena shooter. Survive escalating waves, spend credits
+between waves on upgrades, and bank salvage at the end of a run for permanent
+perks. Built with Godot 4.7 (GL Compatibility) — no external art or audio: the
+arena, the enemies, the poster and every sound effect are drawn or synthesised
+in code, with a handful of CC0 streams for the music beds.
+
+## Controls
+
+| Input | Action |
+|-------|--------|
+| `WASD` / arrows | Move |
+| Mouse | Aim |
+| Left mouse | Fire |
+| Right mouse | Charge shot (once bought) |
+| `Space` | Dash (burst with i-frames) |
+| `Esc` | Pause |
+| `R` | Restart (on the game-over screen) |
+
+## Run from source
+
+Requires [Godot 4.7](https://godotengine.org/download) (the project uses the
+`4.7` feature set and GL Compatibility renderer).
+
+```sh
+# open the project in the editor
+godot --path .
+
+# or run it directly
+godot --path . --headless   # not playable, but a smoke test
+godot --path .
+```
+
+On a clean checkout, open the project (or run `godot --path . --import`) once so
+Godot builds its import and global-class caches before running the tests or
+exporting.
+
+## Tests
+
+The suite is gated behind a command-line flag and runs headless:
+
+```sh
+godot --path . --headless NEON_TEST
+```
+
+It prints `SELFTEST PASS` and exits `0`, or `SELFTEST FAIL (n):` with one line
+per failed probe and exits `1`. It snapshots and restores your real `user://`
+save, so running it never touches your records.
+
+Screenshot modes for eyeballing the look (non-headless; writes `shot_<mode>.png`):
+
+```sh
+godot --path . NEON_SHOT=menu     # title poster (shows the version strap)
+godot --path . NEON_SHOT=run      # arena 1 in a live run
+godot --path . NEON_SHOT=over     # game-over summary card
+godot --path . NEON_SHOT=shadow   # occluder shadow A/B measurement
+```
+
+## Build
+
+Export templates for the engine version must be installed. The Windows preset is
+committed in `export_presets.cfg` and writes `Wavebreaker.exe`:
+
+```sh
+godot --path . --headless --export-release "Windows Desktop" Wavebreaker.exe
+```
+
+The build output (`*.exe`, `*.pck`) and the `.godot/` cache are git-ignored; the
+game is always rebuilt from source.

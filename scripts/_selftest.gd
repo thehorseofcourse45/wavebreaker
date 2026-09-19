@@ -2400,6 +2400,10 @@ func _run(main: Node) -> void:
 		failed.append("game over: the card wants %.0f px of a 720 px window" % go_card.get_combined_minimum_size().y)
 	main._state = main.State.MENU
 
+	# -- Shipping: the poster strap carries the version -------------------------
+	if not RetroMenuArt.strap_text().contains(RetroMenuArt.VERSION):
+		failed.append("ship: the poster strap does not name the version (\"%s\")" % RetroMenuArt.strap_text())
+
 	# -- Lit lighting (addons/lit) ---------------------------------------------
 	# The addon lights nothing by itself: a light with no receiver material is just a
 	# node in a group, and a receiver material with no light is a flat ambient multiply.
