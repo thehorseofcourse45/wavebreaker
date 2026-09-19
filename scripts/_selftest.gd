@@ -1077,6 +1077,49 @@ func _run(main: Node) -> void:
 	elif not _stream_loops(AudioManager.music):
 		failed.append("audio: the music stream is not set to loop")
 
+	# -- Audio depth: per-archetype deaths, heartbeat, sting -------------------
+	# The generated one-shots are level-calibrated to the shipped beds (-15.8 dB
+	# mean), so measure the heartbeat's RMS and keep it within 1 dB.
+	var hb_stream: AudioStreamWAV = AudioManager._heartbeat
+	if hb_stream == null:
+		failed.append("audio: no generated heartbeat stream")
+	else:
+		var hb_rms: float = _wav_rms(hb_stream)
+		var hb_db: float = linear_to_db(maxf(hb_rms, 0.00001))
+		if absf(hb_db - (-15.8)) > 1.0:
+			failed.append("audio: the generated heartbeat sits at %.1f dB RMS, wanted -15.8 +/- 1" % hb_db)
+	# Per-archetype death tones: distinct per tag, and the enemy derives its own.
+	var ad_chaser: EnemyBase = load("res://scenes/enemy_chaser.tscn").instantiate() as EnemyBase
+	if ad_chaser == null:
+		failed.append("audio: could not instantiate a chaser for the death-sound probe")
+	else:
+		main.add_child(ad_chaser)
+		if ad_chaser.archetype != "chaser":
+			failed.append("audio: the enemy archetype is \"%s\", expected \"chaser\"" % ad_chaser.archetype)
+		if ad_chaser.death_sound == null:
+			failed.append("audio: the chaser has no death sound")
+		ad_chaser.free()
+	var ad_a: AudioStreamWAV = AudioManager.enemy_death_stream("chaser") as AudioStreamWAV
+	var ad_b: AudioStreamWAV = AudioManager.enemy_death_stream("tank") as AudioStreamWAV
+	if ad_a != null and ad_b != null and ad_a.data == ad_b.data:
+		failed.append("audio: two archetypes share one death tone")
+	if AudioManager._sting == null:
+		failed.append("audio: no generated wave-clear sting")
+	# Heartbeat ONLY while low health: drive the HUD's own _process clock.
+	main._hud.set_health(10, 100)
+	main._hud._heartbeat_timer = 0.0
+	var hb_before: int = AudioManager.heartbeat_count
+	main._hud._process(0.0)
+	if AudioManager.heartbeat_count <= hb_before:
+		failed.append("audio: the heartbeat never played at 10/100 health")
+	var hb_low: int = AudioManager.heartbeat_count
+	main._hud.set_health(100, 100)
+	for hb_i: int in 5:
+		main._hud._process(1.0)
+	if AudioManager.heartbeat_count != hb_low:
+		failed.append("audio: the heartbeat kept playing at full health")
+	main._hud.set_health(arena_player.health, arena_player.max_health)
+
 	# -- Typography: the game's own files stay pure ASCII ---------------------
 	# Godot draws with ThemeDB.fallback_font, which has no glyph for an em dash
 	# or an arrow. A non-ASCII character in a LABEL gets substituted from a
@@ -2543,6 +2586,19 @@ func _has_lit_halo(e: Node) -> bool:
 		if child is LitPointLight2D:
 			return true
 	return false
+
+
+## RMS of a 16-bit mono AudioStreamWAV, for the level-calibration probe.
+func _wav_rms(stream: AudioStreamWAV) -> float:
+	var data: PackedByteArray = stream.data
+	var n: int = data.size() / 2
+	if n <= 0:
+		return 0.0
+	var sum_sq: float = 0.0
+	for i: int in n:
+		var s: float = float(data.decode_s16(i * 2)) / 32768.0
+		sum_sq += s * s
+	return sqrt(sum_sq / float(n))
 
 
 ## Everything a shop upgrade can move, in one dict -- the DEFS sweep compares it

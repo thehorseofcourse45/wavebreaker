@@ -24,6 +24,12 @@ const DASH_COOLING_COLOR := Color(0.32, 0.27, 0.42)
 var _dash_pip: ColorRect = null
 
 var _pulse_phase: float = 0.0
+## Heartbeat timing: a short beat that re-fires sooner as more health is missing.
+var _heartbeat_timer: float = 0.0
+const HEARTBEAT_INTERVAL := 0.8
+## The fastest the beat gets (at near-zero health); never zero, or it would fire
+## every frame.
+const HEARTBEAT_MIN_INTERVAL := 0.22
 
 
 func _process(delta: float) -> void:
@@ -34,11 +40,19 @@ func _process(delta: float) -> void:
 	if ratio > LOW_HEALTH_RATIO:
 		_health_bar.modulate = Color.WHITE
 		_low_health.visible = false
+		_heartbeat_timer = 0.0   # full: the next low-health stretch starts fresh
 		return
 	var k: float = 0.5 + 0.5 * absf(sin(_pulse_phase))
 	_health_bar.modulate = Color(1.0, 0.25 + 0.35 * k, 0.25 + 0.35 * k)
 	_low_health.visible = true
 	_low_health.modulate.a = 0.45 + 0.45 * k
+	# Heartbeat: only while low. The interval shrinks with the missing fraction,
+	# so a nearly-dead player hears it faster.
+	_heartbeat_timer -= delta
+	if _heartbeat_timer <= 0.0:
+		var missing: float = clampf(1.0 - ratio, 0.0, 1.0)
+		AudioManager.play_heartbeat(missing)
+		_heartbeat_timer = maxf(HEARTBEAT_MIN_INTERVAL, HEARTBEAT_INTERVAL * (1.0 - 0.65 * missing))
 
 
 func reset(max_hp: int, score: int) -> void:

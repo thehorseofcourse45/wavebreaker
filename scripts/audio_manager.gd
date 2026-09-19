@@ -30,18 +30,70 @@ const DEFAULT_SFX_VOLUME := 1.0
 ## A slider at zero is silence, not -infinity dB (which Godot refuses).
 const SILENT_DB := -80.0
 
+## Generated one-shot tones. The shipped sounds are CC0 files; these are
+## synthesised in-process so the audio pass needs no new downloads, and they are
+## level-calibrated to the existing beds (TONE_AMPLITUDE 0.5 with a squared
+## decay lands near -16 dB RMS, the boss bed's -15.8 dB mean).
+const TONE_RATE := 22050
+const TONE_AMPLITUDE := 0.5
+
 var _pool: Array[AudioStreamPlayer] = []
 var _music_player: AudioStreamPlayer
 var _music_volume: float = DEFAULT_MUSIC_VOLUME
 var _sfx_volume: float = DEFAULT_SFX_VOLUME
+## Per-archetype death tones, built on first use (a dict, not one stream each,
+## so an enemy type that never appears costs nothing).
+var _death_tones: Dictionary = {}
+var _heartbeat: AudioStreamWAV = null
+var _sting: AudioStreamWAV = null
+## Lifetime count of heartbeats actually played. The suite reads it to prove the
+## beat only fires while health is low.
+var heartbeat_count: int = 0
 
 
 func _ready() -> void:
 	_try_load_sounds()
 	_init_pool()
+	_heartbeat = _make_tone(72.0, 44.0, 0.16, TONE_AMPLITUDE, 2.0)
+	_sting = _make_tone(520.0, 900.0, 0.35, TONE_AMPLITUDE, 2.0)
 	var saved: Dictionary = Storage.read_all()
 	_music_volume = clampf(float(saved.get("music_volume", DEFAULT_MUSIC_VOLUME)), 0.0, 1.0)
 	_sfx_volume = clampf(float(saved.get("sfx_volume", DEFAULT_SFX_VOLUME)), 0.0, 1.0)
+
+
+## A short synthesised tone: pitch glides f0 -> f1, with an exponential decay
+## envelope. 16-bit mono at TONE_RATE. Kept public-ish so the suite can measure
+## its level and per-archetype variation.
+func _make_tone(f0: float, f1: float, duration: float, amp: float, curve: float = 2.0) -> AudioStreamWAV:
+	var frames: int = maxi(1, int(TONE_RATE * duration))
+	var data := PackedByteArray()
+	data.resize(frames * 2)
+	var phase: float = 0.0
+	for i: int in frames:
+		var t: float = float(i) / float(frames)
+		phase += TAU * lerpf(f0, f1, t) / float(TONE_RATE)
+		var env: float = pow(1.0 - t, curve)
+		if t < 0.02:
+			env = t / 0.02   # tiny attack, so the burst does not click
+		data.encode_s16(i * 2, int(clampf(sin(phase) * env * amp, -1.0, 1.0) * 32767.0))
+	var wav := AudioStreamWAV.new()
+	wav.format = AudioStreamWAV.FORMAT_16_BITS
+	wav.mix_rate = TONE_RATE
+	wav.stereo = false
+	wav.data = data
+	return wav
+
+
+## The death tone for an archetype tag ("chaser", "boss", ...). Distinct pitch
+## per tag, cached. A tag never seen before still gets a tone.
+func enemy_death_stream(tag: String) -> AudioStream:
+	if _death_tones.has(tag):
+		return _death_tones[tag] as AudioStream
+	var h: int = absi(hash(tag))
+	var base: float = 150.0 + float(h % 6) * 36.0
+	var tone: AudioStreamWAV = _make_tone(base, base * 0.55, 0.2, TONE_AMPLITUDE, 2.0)
+	_death_tones[tag] = tone
+	return tone
 
 
 func music_volume() -> float:
@@ -176,8 +228,24 @@ func play_shoot(_dummy := 0) -> void:
 	_play(shoot, 1.1, -4.0)
 
 
-func play_enemy_death(_dummy := 0) -> void:
-	_play(enemy_death, 0.85, -3.0)
+## Per-archetype death: the enemy hands over its own `death_sound` (derived from
+## its scene in EnemyBase._ready), so the same call serves every variant. Falls
+## back to the shared bed if a caller passes nothing.
+func play_enemy_death(stream: AudioStream = null, _dummy := 0) -> void:
+	_play(stream if stream != null else enemy_death, 0.85, -3.0)
+
+
+## Low-health heartbeat: pitch rises as health drops, so the beat both quickens
+## (the HUD re-fires it sooner) and sharpens. count is the probe's observable.
+func play_heartbeat(missing: float = 0.0) -> void:
+	heartbeat_count += 1
+	_play(_heartbeat, 1.0 + 0.5 * clampf(missing, 0.0, 1.0), -4.0)
+
+
+## Wave-clear sting: one call per cleared wave (Main wires it to the signal), not
+## per enemy.
+func play_wave_sting(_dummy := 0) -> void:
+	_play(_sting if _sting != null else wave_cleared, 1.0, -3.0)
 
 
 func play_player_hit(_dummy := 0) -> void:

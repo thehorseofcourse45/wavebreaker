@@ -538,6 +538,7 @@ func _wire_signals() -> void:
 	_player.died.connect(AudioManager.play_player_death)
 	_waves.wave_started.connect(AudioManager.play_wave_start)
 	_waves.wave_cleared.connect(AudioManager.play_wave_cleared)
+	_waves.wave_cleared.connect(AudioManager.play_wave_sting)
 	_waves.game_over.connect(AudioManager.play_game_over)
 	# Player -> HUD / camera / flow.
 	_player.health_changed.connect(_hud.set_health)
@@ -633,7 +634,7 @@ func _on_enemy_killed(enemy: EnemyBase) -> void:
 		_elites_killed += 1
 	_hud.set_score(_score)
 	_hud.set_credits(_credits)
-	AudioManager.play_enemy_death()
+	AudioManager.play_enemy_death(enemy.death_sound)
 	DeathBurst.spawn(_effects_layer, enemy.global_position, enemy.death_burst_color)
 	_camera.add_trauma(0.22)
 	_camera.add_punch(0.6)

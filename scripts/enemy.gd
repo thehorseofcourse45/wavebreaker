@@ -37,6 +37,14 @@ signal died(enemy: EnemyBase)
 ## least 1 so a mitigated enemy can still be killed.
 @export var damage_taken_mult: float = 1.0
 
+@export_group("Audio")
+## Per-archetype death sound. Deliberately null in the scene: _ready derives the
+## archetype from the scene file and asks AudioManager for a generated tone, so a
+## new enemy type gets its own death sound with no asset authoring.
+@export var death_sound: AudioStream = null
+## Derived archetype tag ("chaser", "boss", ...); names the death tone.
+var archetype: String = ""
+
 @export_group("Affix")
 ## Elite-style modifier rolled by the WaveManager on spawn (see its affix
 ## exports). Applied in _ready BEFORE the halo is built, so a tinted affix
@@ -111,6 +119,10 @@ var _rim: Line2D = null
 
 func _ready() -> void:
 	add_to_group("enemies")
+	if archetype == "":
+		archetype = get_scene_file_path().get_file().get_basename().trim_prefix("enemy_")
+	if death_sound == null:
+		death_sound = AudioManager.enemy_death_stream(archetype)
 	health = max_health
 	if is_instance_valid(_body):
 		_base_color = _body.color
