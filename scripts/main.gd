@@ -482,7 +482,7 @@ func _on_wave_game_over() -> void:
 	# Totals are in the file now, so judge WITHOUT the run dict -- merging it in
 	# again would double-count this run.
 	Unlockables.evaluate()
-	_game_over.show_game_over(_score, _waves.current_wave, record)
+	_game_over.show_game_over(_score, _waves.current_wave, record, _pause_stats())
 
 
 ## Bank this run's salvage. Its own function so the suite can prove a finished

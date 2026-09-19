@@ -2373,6 +2373,33 @@ func _run(main: Node) -> void:
 		failed.append("juice: the hit flash stayed on after its timer")
 	Engine.time_scale = 1.0
 
+	# -- End-of-run summary: the card renders Main._pause_stats() --------------
+	# One source of numbers, two renderers (the STATS tab and this card), so the
+	# probe drives the real game-over path and compares label text to the dict.
+	main._state = main.State.PLAYING
+	main._kills = 7
+	main._score = 1234
+	main._credits = 210
+	main._run_time = 42.0
+	BulletPool.damage_dealt = 4200
+	main._waves.current_wave = 5
+	var go: GameOverScreen = main._game_over
+	await main._on_wave_game_over()
+	var jr: Dictionary = main._pause_stats()
+	if (go._summary_values["kills"] as Label).text != str(int(jr["kills"])):
+		failed.append("game over: KILLS reads %s, expected %d" % [(go._summary_values["kills"] as Label).text, int(jr["kills"])])
+	if (go._summary_values["credits"] as Label).text != str(int(jr["credits"])):
+		failed.append("game over: CREDITS reads %s, expected %d" % [(go._summary_values["credits"] as Label).text, int(jr["credits"])])
+	var go_dps: String = "%.1f" % (float(jr["damage"]) / maxf(float(jr["seconds"]), 1.0))
+	if (go._summary_values["dps"] as Label).text != go_dps:
+		failed.append("game over: DPS reads %s, expected %s" % [(go._summary_values["dps"] as Label).text, go_dps])
+	if (go._summary_values["time"] as Label).text != go._format_time(float(jr["seconds"])):
+		failed.append("game over: TIME reads %s, expected %s" % [(go._summary_values["time"] as Label).text, go._format_time(float(jr["seconds"]))])
+	var go_card: Control = go.get_node("Center/Card") as Control
+	if go_card.get_combined_minimum_size().y > 715.0:
+		failed.append("game over: the card wants %.0f px of a 720 px window" % go_card.get_combined_minimum_size().y)
+	main._state = main.State.MENU
+
 	# -- Lit lighting (addons/lit) ---------------------------------------------
 	# The addon lights nothing by itself: a light with no receiver material is just a
 	# node in a group, and a receiver material with no light is a flat ambient multiply.
