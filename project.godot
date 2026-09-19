@@ -24,6 +24,7 @@ config/features=PackedStringArray("4.7", "GL Compatibility")
 BulletPool="*res://scripts/bullet_pool.gd"
 AudioManager="*res://scripts/audio_manager.gd"
 DamageNumbers="*res://scripts/damage_numbers.gd"
+PickupPool="*res://scripts/pickup_pool.gd"
 _mcp_game_helper="*res://addons/godot_ai/runtime/game_helper.gd"
 LitManager="*res://addons/lit/runtime/lit_manager.gd"
 

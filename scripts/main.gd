@@ -15,6 +15,12 @@ const HIT_STOP_TIME := 0.055
 const STREAK_STEP := 10
 ## Unlockable "war_chest": credits the run starts with, once it is earned.
 const WAR_CHEST_CREDITS := 100
+## Pickups: chance any one kill drops one, and what a drop grants. Health only
+## rolls while the player is actually hurt, so the floor never fills with
+## green while full. A var (not const) so the self-test can force drops.
+const PICKUP_CREDITS := 5
+const PICKUP_HEALTH := 15
+var pickup_drop_chance: float = 0.18
 
 ## Arena scenes, in run order. Wave BOSS_EVERY opens the next one; a third is an
 ## entry here plus one baked scene.
@@ -98,6 +104,7 @@ func _ready() -> void:
 	_hit_stop_timer.timeout.connect(func() -> void: Engine.time_scale = 1.0)
 	add_child(_hit_stop_timer)
 	BulletPool.reset()  # autoloads survive reloads -- park stale bullets
+	PickupPool.reset()  # same for pickups: no leftovers across runs
 	_bind_world()
 	_wire_signals()
 	_enter_menu()
@@ -167,6 +174,10 @@ func _capture_screenshot() -> void:
 				exhibit.position = showcase[1]
 				showcase_box.add_child(exhibit)
 				exhibit.is_dormant = true
+			# Two pickups beyond magnet range (150 px) so they bob for the shot
+			# instead of collecting the moment the settle begins.
+			PickupPool.fire(Vector2(-320, 200), "credits")
+			PickupPool.fire(Vector2(320, 200), "health")
 			settle = 3.0
 		"bossp":
 			# A boss mid-fight in phase 2 (radial burst): fat ring, phase burst,
@@ -460,6 +471,19 @@ func _wire_signals() -> void:
 	# when a round crit, the player knows when a charged shot went out.
 	BulletPool.crit_landed.connect(_on_crit_landed)
 	_player.charged_shot.connect(_on_charged_shot)
+	# Pickups: the pool relays one `collected` per drop, so Main wires once.
+	PickupPool.collected.connect(_on_pickup_collected)
+
+
+## A pickup reached the player: grant it through the paths that already exist
+## (credits through _credits -> HUD, health through the player's heal, which
+## emits health_changed for the HUD).
+func _on_pickup_collected(kind: String) -> void:
+	if kind == "health":
+		_player.heal(PICKUP_HEALTH)
+	else:
+		_credits += PICKUP_CREDITS
+		_hud.set_credits(_credits)
 
 
 func _on_crit_landed() -> void:
@@ -493,6 +517,13 @@ func _on_enemy_killed(enemy: EnemyBase) -> void:
 	_score += enemy.score_value
 	_credits += enemy.score_value
 	_kills += 1
+	# Pickups: a configurable share of kills drops one. Health only while the
+	# player is actually hurt, so a full-health floor never rolls green.
+	if randf() < pickup_drop_chance:
+		var pickup_kind: String = "health" \
+				if _player.health < _player.max_health and randf() < 0.35 \
+				else "credits"
+		PickupPool.fire(enemy.global_position, pickup_kind)
 	# Variants tag themselves with a group in _ready, so this is the whole
 	# "boss / elite killed" counter -- no per-variant type checks here.
 	if enemy.is_in_group("bosses"):
@@ -612,6 +643,7 @@ func _switch_arena(index: int) -> void:
 	_arena_index = index
 	_bind_world()
 	BulletPool.reset()          # no leftover rounds flying in the new layout
+	PickupPool.reset()          # or pickups bobbing where the old arena was
 	_waves.rebind_container()
 	_waves.enter_hard_arena()
 	_player.global_position = Vector2.ZERO   # deliberate: no free full heal here

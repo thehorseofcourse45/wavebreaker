@@ -501,6 +501,63 @@ func _run(main: Node) -> void:
 	wm._alive = aff_saved_alive
 	wm.stop()
 
+	# -- Pickups: forced drop, magnet collect exactly once, despawn, reset -----
+	var pk_saved_chance: float = main.pickup_drop_chance
+	var pk_saved_pos: Vector2 = arch_player.global_position
+	var pk_active0: int = PickupPool.active_count()
+	var pk_events: Array[String] = []
+	PickupPool.collected.connect(func(kind: String) -> void: pk_events.append(kind))
+	main.pickup_drop_chance = 1.0
+	var pk_enemy: Node = load("res://scenes/enemy_chaser.tscn").instantiate()
+	pk_enemy.position = Vector2(-420, -180)
+	wm._enemy_container.add_child(pk_enemy)
+	await main.get_tree().process_frame   # let the kill watcher arm on entry
+	pk_enemy.take_damage(9999)
+	await main.get_tree().process_frame
+	if PickupPool.active_count() != pk_active0 + 1:
+		failed.append("pickups: a forced 100%% drop produced %d new pickups, expected exactly 1" % (PickupPool.active_count() - pk_active0))
+	# Walk the player onto the drop: the magnet pulls it in and the grant lands
+	# exactly once, then the pickup parks again.
+	arch_player.global_position = Vector2(-420, -180)
+	var pk_frames := 0
+	while pk_events.is_empty() and pk_frames < 60:
+		await main.get_tree().physics_frame
+		pk_frames += 1
+	if pk_events != ["credits"]:
+		failed.append("pickups: collecting one credits drop raised %s, expected exactly [\"credits\"]" % str(pk_events))
+	if PickupPool.active_count() != pk_active0:
+		failed.append("pickups: the collected pickup never parked (%d still active)" % PickupPool.active_count())
+	# A health drop heals through the player's real heal() path.
+	arch_player.health = 50
+	PickupPool.fire(arch_player.global_position + Vector2(0, -40), "health")
+	pk_frames = 0
+	while pk_events.size() < 2 and pk_frames < 60:
+		await main.get_tree().physics_frame
+		pk_frames += 1
+	if arch_player.health != 50 + main.PICKUP_HEALTH:
+		failed.append("pickups: a health drop moved the player to %d, expected %d" % [arch_player.health, 50 + main.PICKUP_HEALTH])
+	# Despawn: a short-lived drop vanishes on its own and never collects.
+	var pk_short: Pickup = PickupPool.fire(Vector2(600, 520), "credits")
+	pk_short.lifetime = 0.2
+	pk_frames = 0
+	while PickupPool.active_count() > pk_active0 and pk_frames < 30:
+		await main.get_tree().physics_frame
+		pk_frames += 1
+	if PickupPool.active_count() != pk_active0:
+		failed.append("pickups: a drop outlived its lifetime (%d active after %d frames)" % [PickupPool.active_count(), pk_frames])
+	if pk_events.size() != 2:
+		failed.append("pickups: the despawned drop collected anyway (%s)" % str(pk_events))
+	# reset() parks everything: the arena-switch contract.
+	PickupPool.fire(Vector2(-600, 0), "credits")
+	PickupPool.fire(Vector2(600, 0), "credits")
+	PickupPool.reset()
+	if PickupPool.active_count() != 0:
+		failed.append("pickups: reset() left %d live pickups" % PickupPool.active_count())
+	main.pickup_drop_chance = pk_saved_chance
+	arch_player.global_position = pk_saved_pos
+	arch_player.velocity = Vector2.ZERO
+	arch_player.health = base_hp
+
 	# -- Enemy rounds are hostile: they hurt the player, never their own kind ---
 	# Regression: Bullet.fire() used to reset `hostile` right after BulletPool
 	# set it, so every enemy shot was harmless to the player AND damaged other
