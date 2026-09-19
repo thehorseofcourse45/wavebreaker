@@ -135,39 +135,46 @@ func _run(main: Node) -> void:
 	tank.queue_free()
 
 	# -- Bullet swept hit: a fast shot at a distant enemy still registers -----
+	# Deterministic by construction: the dummy's position is set BEFORE it enters
+	# the tree (set_deferred placement flaked one run in three -- under jitter Godot
+	# runs several physics steps in one iteration and the deferred set only flushes
+	# at the iteration boundary, so the aim was computed at the dummy's stale
+	# pre-placement position). It is parked INSIDE the reserved clear corridor
+	# (y=100, x=-300..360), ahead of the muzzle, and dormant so nothing moves it.
 	var tank2: Node = load("res://scenes/enemy_tank.tscn").instantiate()
-	wm._enemy_container.add_child(tank2)
-	tank2.set_deferred("global_position", Vector2(200, 100))
+	tank2.position = Vector2(200, 100)
 	tank2.is_dormant = true  # freeze: target must not wander mid-shot
+	wm._enemy_container.add_child(tank2)
 	var tank_hits := [0]
 	tank2.connect("damaged", func(_a: int) -> void: tank_hits[0] += 1)
-	await main.get_tree().physics_frame
-	await main.get_tree().physics_frame
-	var muzzle := Vector2(-300, 100)
-	var aim_dir: Vector2 = (tank2.global_position - muzzle).normalized()
-	var bullet: Node = BulletPool.fire(muzzle, aim_dir, 12, 700.0)
+	for i in 2:
+		await main.get_tree().physics_frame   # let the space state register the body
+	var bullet: Node = BulletPool.fire(Vector2(-300, 100), Vector2.RIGHT, 12, 700.0)
 	var fired_frames := 0
 	while is_instance_valid(bullet) and bullet.is_active and fired_frames < 120:
 		await main.get_tree().physics_frame
 		fired_frames += 1
-	# At ~60Hz the bullet crosses 200px in ~17 frames; give margin.
+	# At ~60Hz the bullet crosses the 500 px lane in ~43 frames; 120 is a hard
+	# budget, not slack -- a miss must time out loudly, not pass quietly.
 	if tank_hits[0] != 1:
 		failed.append("tank got %d hits, expected exactly 1 (sweep broken)" % tank_hits[0])
 	if fired_frames >= 120:
 		failed.append("bullet never deactivated (missed everything & timed out)")
 	tank2.queue_free()
 	# Long-range tunneling: speed so high a single frame outweighs the body.
-	# Sweep must still register the hit mid-frame.
+	# Sweep must still register the hit mid-frame. The muzzle sits 15 px from the
+	# dummy's centre, i.e. INSIDE its 22 px circle: the ray starts inside the body
+	# and cannot report it, so this doubles as the swept-hit fallback's in-body
+	# start case (a body overlapping the muzzle absorbs the shot, immediately).
 	tank2 = load("res://scenes/enemy_tank.tscn").instantiate()
-	wm._enemy_container.add_child(tank2)
-	tank2.set_deferred("global_position", Vector2(355, 100))
+	tank2.position = Vector2(355, 100)
 	tank2.is_dormant = true
+	wm._enemy_container.add_child(tank2)
 	var tank2_hits := [0]
 	tank2.connect("damaged", func(_a: int) -> void: tank2_hits[0] += 1)
-	await main.get_tree().physics_frame
-	var muzzle2 := Vector2(340, 100)
-	var aim2: Vector2 = (tank2.global_position - muzzle2).normalized()
-	var bullet2: Node = BulletPool.fire(muzzle2, aim2, 12, 2400.0)  # ~40px/frame
+	for i in 2:
+		await main.get_tree().physics_frame
+	var bullet2: Node = BulletPool.fire(Vector2(340, 100), Vector2.RIGHT, 12, 2400.0)  # ~40px/frame
 	fired_frames = 0
 	while is_instance_valid(bullet2) and bullet2.is_active and fired_frames < 60:
 		await main.get_tree().physics_frame
@@ -176,40 +183,40 @@ func _run(main: Node) -> void:
 		failed.append("tunneling probe: expected 1 hit on thin band, got %d" % tank2_hits[0])
 	tank2.queue_free()
 
-	# -- Direct approach probe: knife-edge case. Chaser walks INTO a bullet. --
+	# -- Direct approach probe: knife-edge case. Chaser sits on the muzzle line. --
 	var chase3: Node = load("res://scenes/enemy_chaser.tscn").instantiate()
-	wm._enemy_container.add_child(chase3)
-	chase3.set_deferred("global_position", Vector2(-100, 240))
+	chase3.position = Vector2(-100, 240)
 	chase3.is_dormant = true   # freeze for a deterministic first shot
+	wm._enemy_container.add_child(chase3)
 	var chase_hits := [0]
 	chase3.connect("damaged", func(_a: int) -> void: chase_hits[0] += 1)
-	for i in 3:   # 3 frames of damping so spawn/actually-placed pos settles
+	for i in 3:   # 3 frames of damping so the space state settles
 		await main.get_tree().physics_frame
-	var a_m := Vector2(-100, 40)
-	var a_dir: Vector2 = (chase3.global_position - a_m).normalized()
-	var b1: Node = BulletPool.fire(a_m, a_dir, 12, 700.0)
+	var b1: Node = BulletPool.fire(Vector2(-100, 40), Vector2(0, 1), 12, 700.0)
 	var hit_frames := 0
 	while is_instance_valid(b1) and b1.is_active and hit_frames < 60:
 		await main.get_tree().physics_frame
 		hit_frames += 1
 	if chase_hits[0] < 1:
 		# bullet reached its target without registering -- capture evidence
-		failed.append("head-on probe: bullet did not register on dormant chaser from %s toward %s (bullet last at %s)" % [str(a_m), str(chase3.global_position), str(b1.global_position) if is_instance_valid(b1) else "?"])
+		failed.append("head-on probe: bullet did not register on dormant chaser at %s (bullet last at %s)" % [str(chase3.global_position), str(b1.global_position) if is_instance_valid(b1) else "?"])
 	chase3.queue_free()
 
-	# -- Moving-target probe: enemy approaches the bullet mid-flight ----------
+	# -- Moving-target probe: a LIVE enemy crosses the round's path mid-flight --
+	# The chaser is live and steering at the player at the arena centre, but it
+	# starts inside the corridor 50 px ahead of the muzzle, ON the firing line:
+	# geometry guarantees the intercept (closing speed ~815 px/s, lateral drift
+	# under 1 px/frame against a ~20 px combined radius), not wall-clock luck.
 	var chaser2: Node = load("res://scenes/enemy_chaser.tscn").instantiate()
+	chaser2.position = Vector2(-250, 100)
 	wm._enemy_container.add_child(chaser2)
-	chaser2.set_deferred("global_position", Vector2(-100, 240))
 	var chaser_hits := [0]
 	chaser2.connect("damaged", func(_a: int) -> void: chaser_hits[0] += 1)
-	await main.get_tree().physics_frame
-	# fire up-field so the chaser (steering toward player at center) closes in
-	var c_muzzle := Vector2(-100, 40)
-	var c_aim: Vector2 = Vector2(0, 1)  # down-field toward the incoming chaser
-	var cb: Node = BulletPool.fire(c_muzzle, c_aim, 12, 700.0)
+	for i in 2:
+		await main.get_tree().physics_frame
+	var cb: Node = BulletPool.fire(Vector2(-300, 100), Vector2.RIGHT, 12, 700.0)
 	var c_frames := 0
-	while is_instance_valid(cb) and cb.is_active and c_frames < 90:
+	while is_instance_valid(cb) and cb.is_active and c_frames < 30:
 		await main.get_tree().physics_frame
 		c_frames += 1
 	if chaser_hits[0] < 1:
@@ -719,7 +726,10 @@ func _run(main: Node) -> void:
 	AudioManager.set_sfx_volume(0.5)
 	var sfx_marker: Array = _playing_sfx_players()
 	AudioManager.play_shoot()
-	if _count_playing_sfx() <= playing_before:
+	# Identity, not count: a leftover ringing from an earlier probe can finish
+	# between the two reads and mask the new player -- a count comparison flaked
+	# one run in three exactly that way.
+	if _new_sfx_since(sfx_marker).is_empty():
 		failed.append("audio: no sound started with the SFX slider up")
 	# ...and it is actually played quieter: play_shoot asks for -4.0 dB, so the
 	# slider at 0.5 has to land at -4.0 + linear_to_db(0.5) = -10.0 dB.
@@ -2011,6 +2021,17 @@ func _playing_sfx_players() -> Array:
 		if p.playing:
 			playing.append(p)
 	return playing
+
+
+## Pooled SFX players that started after `before` was captured. Identity, not
+## count: the pool has ten slots and reuses them, so "playing and new since the
+## marker" is the only reliable proof a sound started.
+func _new_sfx_since(before: Array) -> Array:
+	var fresh: Array = []
+	for p: AudioStreamPlayer in AudioManager._pool:
+		if p.playing and not before.has(p):
+			fresh.append(p)
+	return fresh
 
 
 ## Walk a res:// directory (scripts/scenes only -- never addons/) and collect
