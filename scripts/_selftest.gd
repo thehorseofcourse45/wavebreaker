@@ -33,6 +33,8 @@ func _run(main: Node) -> void:
 	# progress. The real save is restored at the end.
 	Storage.set_value(Unlockables.SAVE_KEY, {})
 	Unlockables.refresh()
+	Storage.set_value(Perks.SAVE_KEY, {})
+	Perks.refresh()
 
 	# -- Upgrade economy ------------------------------------------------------
 	var up: Node = load("res://scripts/upgrade_system.gd").new()
@@ -1623,10 +1625,11 @@ func _run(main: Node) -> void:
 	if pm_tabs == null:
 		failed.append("pause: the tab container is missing")
 	else:
-		if pm_tabs.get_tab_count() != 2:
-			failed.append("pause: expected 2 tabs, found %d" % pm_tabs.get_tab_count())
-		elif pm_tabs.get_tab_title(0) != "MENU" or pm_tabs.get_tab_title(1) != "UNLOCKABLES":
-			failed.append("pause: tab titles are '%s' / '%s'" % [pm_tabs.get_tab_title(0), pm_tabs.get_tab_title(1)])
+		if pm_tabs.get_tab_count() != 3:
+			failed.append("pause: expected 3 tabs (MENU/UNLOCKABLES/PERKS), found %d" % pm_tabs.get_tab_count())
+		elif pm_tabs.get_tab_title(0) != "MENU" or pm_tabs.get_tab_title(1) != "UNLOCKABLES" \
+				or pm_tabs.get_tab_title(2) != "PERKS":
+			failed.append("pause: tab titles are '%s' / '%s' / '%s'" % [pm_tabs.get_tab_title(0), pm_tabs.get_tab_title(1), pm_tabs.get_tab_title(2)])
 		pm_tabs.current_tab = 1
 		await main.get_tree().process_frame
 		var unlock_tab: Control = pm_tabs.get_current_tab_control() as Control
@@ -2158,6 +2161,59 @@ func _run(main: Node) -> void:
 	if pm._stats_page.get_parent() != null:
 		failed.append("unlockables: the STATS tab stayed after the unlockable went away")
 
+	# -- Meta-progression: salvage banks, wipes with RESET, perks persist -------
+	# Banking is the one path that turns a run's leftovers into meta progress.
+	# It must write its OWN key: a bank that wrote total_kills would double-count
+	# against record_run() (the same invariant the flush_run probe polices).
+	Storage.set_value("total_kills", 111)
+	main._credits = 200
+	main._bank_salvage()
+	if Storage.salvage() != 50:
+		failed.append("salvage: a 200-credit run banked %d, expected 50" % Storage.salvage())
+	if int(Storage.get_value("total_kills", 0)) != 111:
+		failed.append("salvage: banking wrote total_kills, which record_run owns")
+	# RESET SAVE is progress, not a preference: it takes the salvage with it.
+	Storage.set_value("salvage", 999)
+	Storage.reset_progress()
+	if Storage.salvage() != 0:
+		failed.append("salvage: RESET SAVE kept the salvage balance (%d)" % Storage.salvage())
+	# A bought perk has to survive a cache refresh and reach the player.
+	Perks.refresh()
+	Storage.set_value(Perks.SAVE_KEY, {})
+	Storage.set_value("salvage", 500)
+	if not Perks.buy("vigor"):
+		failed.append("perks: could not buy VIGOR with 500 salvage")
+	if Perks.level("vigor") != 1:
+		failed.append("perks: VIGOR level did not read back (%d)" % Perks.level("vigor"))
+	if Storage.salvage() >= 500:
+		failed.append("perks: buying VIGOR did not deduct salvage")
+	Perks.refresh()   # write -> refresh -> read
+	if Perks.level("vigor") != 1:
+		failed.append("perks: a bought perk did not survive a refresh() round-trip")
+	var perk_player: Player = main.get_node("World/Player") as Player
+	var perk_hp_base: int = perk_player._base_max_health
+	Perks.apply_to_player(perk_player)
+	if perk_player.max_health != perk_hp_base + Perks.VIGOR_HP:
+		failed.append("perks: VIGOR did not raise max HP (%d vs base %d)" % [perk_player.max_health, perk_hp_base])
+	perk_player.max_health = perk_hp_base
+	perk_player.health = perk_hp_base
+	# The PERKS tab renders a row per registry entry, and its button buys through
+	# the same Perks.buy the probe just called (no second purchase path).
+	pm.refresh_perks()
+	if pm._perk_rows.size() != Perks.DEFS.size():
+		failed.append("perks: the PERKS tab has %d rows for %d registry entries" % [pm._perk_rows.size(), Perks.DEFS.size()])
+	Storage.set_value(Perks.SAVE_KEY, {})
+	Storage.set_value("salvage", 100)
+	Perks.refresh()
+	pm.refresh_perks()
+	var perk_btn: Button = pm._perk_rows["vigor"]["btn"] as Button
+	perk_btn.pressed.emit()
+	if Perks.level("vigor") != 1:
+		failed.append("perks: the PERKS tab button did not buy VIGOR")
+	Storage.set_value(Perks.SAVE_KEY, {})
+	Storage.set_value("salvage", 0)
+	Perks.refresh()
+
 	# -- Lit lighting (addons/lit) ---------------------------------------------
 	# The addon lights nothing by itself: a light with no receiver material is just a
 	# node in a group, and a receiver material with no light is a flat ambient multiply.
@@ -2277,8 +2333,9 @@ func _run(main: Node) -> void:
 
 	# -- Summary ---------------------------------------------------------------
 	_restore_save(save_had_file, save_snapshot)
-	# The cache has to follow the RESTORED file, not the flags the probes set.
+	# The caches have to follow the RESTORED file, not the flags the probes set.
 	Unlockables.refresh()
+	Perks.refresh()
 	if failed.is_empty():
 		print("SELFTEST PASS")
 	else:

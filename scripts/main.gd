@@ -15,6 +15,9 @@ const HIT_STOP_TIME := 0.055
 const STREAK_STEP := 10
 ## Unlockable "war_chest": credits the run starts with, once it is earned.
 const WAR_CHEST_CREDITS := 100
+## Share of a finished run's unspent credits banked as permanent SALVAGE, spent
+## on the pause menu's PERKS tab.
+const SALVAGE_RATE := 0.25
 ## Pickups: chance any one kill drops one, and what a drop grants. Health only
 ## rolls while the player is actually hurt, so the floor never fills with
 ## green while full. A var (not const) so the self-test can force drops.
@@ -279,8 +282,13 @@ func start_game() -> void:
 	_run_time = 0.0
 	_second_wind_used = false
 	BulletPool.damage_dealt = 0   # the STATS tab's DPS column is per run
-	# Unlockable "war_chest": a head start at the first shop.
-	_credits = WAR_CHEST_CREDITS if Unlockables.is_unlocked("war_chest") else 0
+	# Meta perks: read the save's perk levels, then scale the player from its
+	# pristine base stats (safe to call on every run start).
+	Perks.refresh()
+	Perks.apply_to_player(_player)
+	# Unlockable "war_chest" plus the HEAD START perk: credits at the first shop.
+	_credits = (WAR_CHEST_CREDITS if Unlockables.is_unlocked("war_chest") else 0) \
+			+ Perks.starting_credits()
 	Engine.time_scale = 1.0
 	_upgrades = load("res://scripts/upgrade_system.gd").new()
 	add_child(_upgrades)
@@ -373,6 +381,10 @@ func _on_wave_game_over() -> void:
 	var record: Dictionary = Storage.record_run(_score, _waves.current_wave, _kills)
 	# The STATS tab's "best wave by difficulty" rows: one key per difficulty.
 	Storage.record_difficulty_wave(_waves.difficulty, _waves.current_wave)
+	# Meta-progression: bank a share of the leftover credits. Kept OUT of the
+	# record_run()/flush_run() counters -- salvage is its own key and must not
+	# collide with the three keys record_run owns.
+	_bank_salvage()
 	var stats: Dictionary = _run_stats()
 	# "Clear a Hard run" = finish a scripted campaign on Hard without dying.
 	if _player.is_alive and not _waves.endless and _waves.difficulty == "hard" \
@@ -385,6 +397,12 @@ func _on_wave_game_over() -> void:
 	# again would double-count this run.
 	Unlockables.evaluate()
 	_game_over.show_game_over(_score, _waves.current_wave, record)
+
+
+## Bank this run's salvage. Its own function so the suite can prove a finished
+## run's leftovers reach the save without driving the whole game-over beat.
+func _bank_salvage() -> void:
+	Storage.record_salvage(int(float(_credits) * SALVAGE_RATE))
 
 
 func _restart() -> void:
@@ -483,7 +501,7 @@ func _on_pickup_collected(kind: String) -> void:
 	if kind == "health":
 		_player.heal(PICKUP_HEALTH)
 	else:
-		_credits += PICKUP_CREDITS
+		_credits += Perks.scaled_credits(PICKUP_CREDITS)
 		_hud.set_credits(_credits)
 
 
@@ -516,7 +534,7 @@ func _on_boss_phase_changed(phase: int, color: Color, at: Vector2) -> void:
 
 func _on_enemy_killed(enemy: EnemyBase) -> void:
 	_score += enemy.score_value
-	_credits += enemy.score_value
+	_credits += Perks.scaled_credits(enemy.score_value)
 	_kills += 1
 	# Pickups: a configurable share of kills drops one. Health only while the
 	# player is actually hurt, so a full-health floor never rolls green.

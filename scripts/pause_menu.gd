@@ -9,6 +9,8 @@ class_name PauseMenu
 
 signal resume_pressed
 signal quit_pressed
+## A perk level was bought with salvage (the tab refreshed itself first).
+signal perk_bought(id: String)
 
 const Storage := preload("res://scripts/storage.gd")
 
@@ -33,6 +35,9 @@ const TILE_WIDTH := 92
 ## authored in the tscn, because the whole tab only exists once it is earned --
 ## and the rows are labels, not a scene.
 const STATS_TAB := "STATS"
+## The PERKS tab (meta-progression). Always present: salvage is the core meta
+## loop, so the shop that spends it is never hidden behind a wave gate.
+const PERKS_TAB := "PERKS"
 ## Row definitions: {"key", "text"} plus "header" for a section title. The values
 ## come from Main (this run) and the save (lifetime), never from this script.
 const STATS_ROWS: Array[Dictionary] = [
@@ -56,6 +61,9 @@ const STATS_ROWS: Array[Dictionary] = [
 
 var _stats_page: VBoxContainer = null
 var _stats_values: Dictionary = {}   # row key -> its value Label
+var _perks_page: VBoxContainer = null
+var _salvage_label: Label = null
+var _perk_rows: Dictionary = {}      # perk id -> {"btn": Button, "label": Label}
 
 
 func _ready() -> void:
@@ -69,7 +77,9 @@ func _ready() -> void:
 	_sfx_slider.value_changed.connect(AudioManager.set_sfx_volume)
 	_build_unlockables()
 	_build_stats()
+	_build_perks()
 	refresh_stats()
+	refresh_perks()
 
 
 ## Build the STATS page once. `refresh_stats()` decides whether the TabContainer
@@ -154,6 +164,66 @@ func _set_stat(key: String, value: String) -> void:
 		(_stats_values[key] as Label).text = value
 
 
+## Build the PERKS page once: a salvage balance header and one buy row per
+## Perks.DEFS entry. The page is plain Labels + Buttons, like the STATS page --
+## no scene to keep in sync with the registry.
+func _build_perks() -> void:
+	_perks_page = VBoxContainer.new()
+	_perks_page.name = PERKS_TAB
+	_perks_page.add_theme_constant_override("separation", 4)
+	var head := HBoxContainer.new()
+	var head_label := Label.new()
+	head_label.text = "SALVAGE"
+	head_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_salvage_label = Label.new()
+	_salvage_label.text = "0"
+	_salvage_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	head.add_child(head_label)
+	head.add_child(_salvage_label)
+	_perks_page.add_child(head)
+	for d: Dictionary in Perks.DEFS:
+		var id: String = String(d.id)
+		var line := HBoxContainer.new()
+		var lbl := Label.new()
+		lbl.text = "%s  %s" % [String(d.name), String(d.hint)]
+		lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var btn := Button.new()
+		btn.pressed.connect(func() -> void: _on_perk_pressed(id))
+		line.add_child(lbl)
+		line.add_child(btn)
+		_perks_page.add_child(line)
+		_perk_rows[id] = {"btn": btn, "label": lbl}
+	_tabs.add_child(_perks_page)
+
+
+func _on_perk_pressed(id: String) -> void:
+	if Perks.buy(id):
+		refresh_perks()
+		perk_bought.emit(id)
+
+
+## Reflect the salvage balance and each row's next price. Called on build and on
+## every open(), so a run banked since the last pause is visible immediately.
+func refresh_perks() -> void:
+	if _perks_page == null:
+		return
+	var balance: int = Storage.salvage()
+	_salvage_label.text = str(balance)
+	for d: Dictionary in Perks.DEFS:
+		var id: String = String(d.id)
+		if not _perk_rows.has(id):
+			continue
+		var btn: Button = _perk_rows[id]["btn"]
+		var lvl: int = Perks.level(id)
+		if lvl >= int(d.get("max_level", 1)):
+			btn.text = "MAX"
+			btn.disabled = true
+		else:
+			var price: int = Perks.cost(id)
+			btn.text = "%d  (%d/%d)" % [price, lvl, int(d.get("max_level", 1))]
+			btn.disabled = balance < price
+
+
 ## One tile per Unlockables.DEFS row: the 64x64 icon, its name, and the condition
 ## as the tooltip. The tile is NAMED after the unlockable id, which is what
 ## refresh_unlockables() and the self-test look tiles up by.
@@ -210,6 +280,7 @@ func open(run: Dictionary = {}) -> void:
 	sync_audio_sliders()   # volumes may have moved in the main menu since the last pause
 	refresh_unlockables()
 	refresh_stats(run)
+	refresh_perks()
 	_resume_btn.grab_focus()
 
 

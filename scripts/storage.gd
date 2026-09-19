@@ -74,6 +74,36 @@ static func record_run(score: int, wave: int, kills: int = 0, path: String = PAT
 	return result
 
 
+## Salvage: the meta-currency banked from a run's unspent credits (a share,
+## banked at game over) and spent on permanent perks in the pause menu. It is
+## earned PROGRESS, not a preference, so RESET SAVE wipes it with the records.
+static func record_salvage(amount: int, path: String = PATH) -> void:
+	if amount <= 0:
+		return
+	var data := read_all(path)
+	data["salvage"] = int(data.get("salvage", 0)) + amount
+	write_all(data, path)
+
+
+## Current salvage balance.
+static func salvage(path: String = PATH) -> int:
+	return int(read_all(path).get("salvage", 0))
+
+
+## Spend up to `amount` salvage. Returns what was actually spent (clamped to the
+## balance), so a caller can detect a shortfall. Kept here rather than reused from
+## record_salvage() because that helper deliberately ignores non-positive amounts.
+static func spend_salvage(amount: int, path: String = PATH) -> int:
+	if amount <= 0:
+		return 0
+	var data: Dictionary = read_all(path)
+	var balance: int = int(data.get("salvage", 0))
+	var spent: int = mini(balance, amount)
+	data["salvage"] = balance - spent
+	write_all(data, path)
+	return spent
+
+
 ## Erase the run records and keep the preferences (mutes, endless). One owner
 ## for "what counts as progress", so no caller has to remember the key list.
 static func reset_progress(path: String = PATH) -> void:

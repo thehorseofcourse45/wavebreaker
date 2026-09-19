@@ -113,6 +113,9 @@ var _dash_dir: Vector2 = Vector2.ZERO
 var _base_bullet_damage: int = 0
 ## Pristine max_health from _ready -- what a mutator is measured against.
 var _base_max_health: int = 0
+## Pristine move_speed / damage_reduction from _ready, for perks that scale them.
+var _base_move_speed: float = 0.0
+var _base_damage_reduction: float = 0.0
 ## Lit: the player's torch (see _setup_lighting).
 var _torch: LitPointLight2D = null
 var _charge_t: float = 0.0   # seconds RMB has been held (see _handle_charge)
@@ -134,6 +137,8 @@ func _ready() -> void:
 	health = max_health
 	_base_bullet_damage = bullet_damage   # pristine, for mutators that scale it
 	_base_max_health = max_health
+	_base_move_speed = move_speed
+	_base_damage_reduction = damage_reduction
 	_setup_lighting()
 	_apply_unlockable_skin()
 	# An emissive rim stays readable outside the torch; inherits hit/iframe modulation.
