@@ -139,7 +139,7 @@ func _capture_screenshot() -> void:
 			settle = 12.0
 		"shop":
 			start_game()
-			_shop.show_shop(_upgrades, 640)
+			_shop.show_shop(_upgrades, 640, _player)
 		"over":
 			start_game()
 			_shop.hide_shop()
@@ -321,6 +321,7 @@ func start_game() -> void:
 	_waves.shop_pause_enabled = true
 	_shop.build(_upgrades)
 	_shop.hide_shop()
+	_shop.refresh(_upgrades, _credits, _player)
 	_player.respawn(Vector2.ZERO)
 	_player.controls_enabled = true
 	_hud.reset(_player.max_health, _credits)
@@ -515,6 +516,7 @@ func _wire_signals() -> void:
 	# Shop UI.
 	_shop.buy_attempted.connect(_on_shop_buy)
 	_shop.resume_pressed.connect(_on_shop_resume)
+	_shop.reroll_attempted.connect(_on_shop_reroll)
 	# Lifetime counters fed by the systems that own the events: the pool knows
 	# when a round crit, the player knows when a charged shot went out.
 	BulletPool.crit_landed.connect(_on_crit_landed)
@@ -622,7 +624,7 @@ func _on_wave_cleared(wave_number: int) -> void:
 	if _upgrades == null or _waves == null:
 		return
 	# WaveManager already paused because shop_pause_enabled; open the shop.
-	_shop.show_shop(_upgrades, _credits)
+	_shop.show_shop(_upgrades, _credits, _player)
 	# Lifetime progress is judged at wave boundaries, never per kill. The merged
 	# view (stored + this run) means an unlock can land mid-run; the callout waits
 	# for the shop to close.
@@ -639,8 +641,19 @@ func _on_shop_buy(id: String) -> void:
 		if id == "armor":
 			_bought_armor = true
 		_hud.set_credits(_credits)
-		_shop.refresh(_upgrades, _credits)
+		_shop.refresh(_upgrades, _credits, _player)
 		print("[Shop] Bought %s for %d (credits left: %d)" % [id, int(r.spent), _credits])
+
+
+## A reroll re-deals the offered rows. Main owns the credits, so it pays once and
+## only then asks the shop to re-deal; the shop never touches the balance.
+func _on_shop_reroll() -> void:
+	if _credits < _shop.REROLL_COST:
+		return
+	_credits -= _shop.REROLL_COST
+	_hud.set_credits(_credits)
+	_shop.reroll(_upgrades, _credits, _player)
+	print("[Shop] Rerolled offers for %d (credits left: %d)" % [_shop.REROLL_COST, _credits])
 
 
 func _on_shop_resume() -> void:

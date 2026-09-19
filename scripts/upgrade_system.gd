@@ -9,22 +9,31 @@ signal upgraded(id: String, new_value)
 
 @export var cost_growth: float = 1.35  # price multiplier per purchase of the same id
 
+## Rarity is a fixed per-row tier. It multiplies the price and the size of the
+## effect, so a rare/epic row is a bigger, costlier swing. The rows with exact
+## value probes in the suite are deliberately left "common" so a rarity bump can
+## never silently change a tested magnitude.
+const RARITY_COST: Dictionary = {"common": 1.0, "rare": 1.25, "epic": 1.5}
+const RARITY_EFFECT: Dictionary = {"common": 1.0, "rare": 1.25, "epic": 1.5}
+
 const DEFS: Array[Dictionary] = [
-	{"id": "damage",    "label": "Damage +4",          "base_cost": 40,  "max_level": 8},
-	{"id": "fire_rate", "label": "Fire rate +12%",     "base_cost": 50,  "max_level": 6},
-	{"id": "max_hp",    "label": "Max HP +25",         "base_cost": 45,  "max_level": 6},
-	{"id": "move_spd",  "label": "Speed +8%",          "base_cost": 35,  "max_level": 6},
-	{"id": "bullet_vel","label": "Bullet vel +12%",    "base_cost": 30,  "max_level": 5},
-	{"id": "split_shot","label": "Split shot +1",      "base_cost": 120, "max_level": 3},
-	{"id": "armor",     "label": "Damage taken -10%",  "base_cost": 55,  "max_level": 4},
-	{"id": "iframes",   "label": "Invuln +0.15s",      "base_cost": 40,  "max_level": 4},
-	{"id": "leech",     "label": "Heal +1 per kill",   "base_cost": 65,  "max_level": 4},
-	{"id": "recoil",    "label": "Recoil -25%",        "base_cost": 30,  "max_level": 4},
-	{"id": "pierce",    "label": "Pierce +1 enemy",    "base_cost": 95,  "max_level": 3},
-	{"id": "charge",    "label": "Charge shot (RMB)",  "base_cost": 160, "max_level": 1},
+	{"id": "damage",    "label": "Damage +4",          "base_cost": 40,  "max_level": 8, "rarity": "common"},
+	# fire_rate/bullet_vel stay common: they feed the suite's boss-TTK balance
+	# check, and a rarity bump there is a balance change, not a label change.
+	{"id": "fire_rate", "label": "Fire rate +12%",     "base_cost": 50,  "max_level": 6, "rarity": "common"},
+	{"id": "max_hp",    "label": "Max HP +25",         "base_cost": 45,  "max_level": 6, "rarity": "rare"},
+	{"id": "move_spd",  "label": "Speed +8%",          "base_cost": 35,  "max_level": 6, "rarity": "rare"},
+	{"id": "bullet_vel","label": "Bullet vel +12%",    "base_cost": 30,  "max_level": 5, "rarity": "common"},
+	{"id": "split_shot","label": "Split shot +1",      "base_cost": 120, "max_level": 3, "rarity": "common"},
+	{"id": "armor",     "label": "Damage taken -10%",  "base_cost": 55,  "max_level": 4, "rarity": "common"},
+	{"id": "iframes",   "label": "Invuln +0.15s",      "base_cost": 40,  "max_level": 4, "rarity": "common"},
+	{"id": "leech",     "label": "Heal +1 per kill",   "base_cost": 65,  "max_level": 4, "rarity": "common"},
+	{"id": "recoil",    "label": "Recoil -25%",        "base_cost": 30,  "max_level": 4, "rarity": "common"},
+	{"id": "pierce",    "label": "Pierce +1 enemy",    "base_cost": 95,  "max_level": 3, "rarity": "rare"},
+	{"id": "charge",    "label": "Charge shot (RMB)",  "base_cost": 160, "max_level": 1, "rarity": "epic"},
 	# The one HEALING row: the "no shop" mutator keeps exactly this one open, so a
 	# run with it can still buy health and nothing else.
-	{"id": "repair",    "label": "Field repair (full)", "base_cost": 70,  "max_level": 1},
+	{"id": "repair",    "label": "Field repair (full)", "base_cost": 70,  "max_level": 1, "rarity": "common"},
 ]
 
 var levels: Dictionary = {}   # id -> times purchased
@@ -42,6 +51,7 @@ func cost(id: String) -> int:
 	for d: Dictionary in DEFS:
 		if d.id == id:
 			var price: float = float(d.base_cost) * pow(cost_growth, float(level(id)))
+			price *= _rarity_mult(id, RARITY_COST)
 			# Unlockable "black_market": 10% off everything, forever. Applied here
 			# so the displayed price, the affordability check and the charge all
 			# quote the same number.
@@ -49,6 +59,16 @@ func cost(id: String) -> int:
 				price *= 0.9
 			return int(round(price))
 	return 0
+
+
+func _rarity_mult(id: String, table: Dictionary) -> float:
+	var d: Dictionary = definition(id)
+	return float(table.get(String(d.get("rarity", "common")), 1.0))
+
+
+## The rarity tier shown in the shop label ("" when the row is missing).
+func rarity(id: String) -> String:
+	return String(definition(id).get("rarity", "common"))
 
 
 func definition(id: String) -> Dictionary:
@@ -85,20 +105,29 @@ func buy(id: String, credits: int, player: Player) -> Dictionary:
 	## Returns {"spent": int, "ok": bool, "reason": String}. Pure: no UI.
 	if not can_buy(id, credits):
 		return {"spent": 0, "ok": false, "reason": "unaffordable_or_maxed"}
+	# "Field repair" heals to full, so it is only worth selling while hurt. The
+	# UI also greys it out; this is the authority.
+	if id == "repair" and player.health >= player.max_health:
+		return {"spent": 0, "ok": false, "reason": "at_full_health"}
 	var spent: int = cost(id)
 	levels[id] = level(id) + 1
+	var m: float = _rarity_mult(id, RARITY_EFFECT)
 	match id:
-		"damage":     player.bullet_damage += 4
-		"fire_rate":  player.fire_rate = maxf(0.06, player.fire_rate * 0.88)
-		"max_hp":     player.max_health += 25; player.health = mini(player.health + 25, player.max_health); player.health_changed.emit(player.health, player.max_health)
-		"move_spd":   player.move_speed *= 1.08
-		"bullet_vel": player.bullet_speed *= 1.12
-		"split_shot": player.bullets_per_shot += 1
-		"armor":      player.damage_reduction = minf(0.6, player.damage_reduction + 0.10)
-		"iframes":    player.invulnerability_time += 0.15
-		"leech":      player.kill_heal += 1
-		"recoil":     player.fire_recoil *= 0.75
-		"pierce":     player.pierce_count += 1
+		"damage":     player.bullet_damage += int(round(4.0 * m))
+		"fire_rate":  player.fire_rate = maxf(0.06, player.fire_rate * (1.0 - 0.12 * m))
+		"max_hp":
+			var hp_gain: int = int(round(25.0 * m))
+			player.max_health += hp_gain
+			player.health = mini(player.health + hp_gain, player.max_health)
+			player.health_changed.emit(player.health, player.max_health)
+		"move_spd":   player.move_speed *= 1.0 + 0.08 * m
+		"bullet_vel": player.bullet_speed *= 1.0 + 0.12 * m
+		"split_shot": player.bullets_per_shot += int(round(1.0 * m))
+		"armor":      player.damage_reduction = minf(0.6, player.damage_reduction + 0.10 * m)
+		"iframes":    player.invulnerability_time += 0.15 * m
+		"leech":      player.kill_heal += int(round(1.0 * m))
+		"recoil":     player.fire_recoil *= maxf(0.1, 1.0 - 0.25 * m)
+		"pierce":     player.pierce_count += int(round(1.0 * m))
 		"charge":     player.charge_unlocked = true
 		"repair":     player.heal(player.max_health)
 	upgraded.emit(id, levels[id])

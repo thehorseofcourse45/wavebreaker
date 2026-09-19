@@ -2148,6 +2148,38 @@ func _run(main: Node) -> void:
 	wm.force_affixes = false
 	main._menu.refresh_run_options(false, false)
 
+	# -- Shop depth: reroll re-deals offers and charges exactly once ------------
+	main._state = main.State.MENU
+	main.start_game()
+	wm.stop()
+	main._credits = 500
+	main._shop.refresh(main._upgrades, main._credits, main.get_node("World/Player"))
+	var reroll_before: Array[String] = main._shop._offered.duplicate()
+	var credits_before_reroll: int = main._credits
+	main._on_shop_reroll()
+	if main._credits != credits_before_reroll - main._shop.REROLL_COST:
+		failed.append("shop: reroll charged %d, expected exactly %d once" % [credits_before_reroll - main._credits, main._shop.REROLL_COST])
+	if main._shop._offered == reroll_before:
+		failed.append("shop: reroll did not change the offered rows")
+	if main._shop._row_ids != main._shop._offered:
+		failed.append("shop: hotkey order does not follow the rerolled offers")
+	# Repair: heals to full below full, refuses at full, then is maxed.
+	var rep_player: Player = main.get_node("World/Player") as Player
+	rep_player.health = 1
+	var rep_hp_before: int = rep_player.health
+	var rep_res: Dictionary = main._upgrades.buy("repair", 999999, rep_player)
+	if not bool(rep_res.ok) or rep_player.health != rep_player.max_health:
+		failed.append("shop: repair did not heal to full (%d -> %d of %d)" % [rep_hp_before, rep_player.health, rep_player.max_health])
+	if main._upgrades.level("repair") != 1 or main._upgrades.can_buy("repair", 999999):
+		failed.append("shop: repair did not disappear after one purchase")
+	var rep_up: Node = load("res://scripts/upgrade_system.gd").new()
+	main.add_child(rep_up)
+	rep_player.health = rep_player.max_health
+	if bool(rep_up.buy("repair", 99999, rep_player).ok):
+		failed.append("shop: repair was sold while already at full health")
+	rep_up.queue_free()
+	main._state = main.State.MENU
+
 	# vault_arena: arena 3 exists, stays shut until earned, then swaps in with its
 	# own baked navmesh (the new cover has to be pathable, or enemies beeline).
 	if main.ARENA_SCENES.size() < 3:
