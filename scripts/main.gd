@@ -47,6 +47,11 @@ var _kills: int = 0
 var _upgrades: Node = null
 var _hit_stop_timer: Timer = null
 var _arena_index: int = 0
+## A crit's hit-stop is guarded so a second crit cannot stack a fresh dip on top
+## of one already running (two crits would otherwise freeze the game).
+var _crit_stop_active: bool = false
+## How many crit dips actually started; the suite's observable.
+var _crit_stop_count: int = 0
 
 ## Lifetime progress for the unlockables. These live in memory for the run and
 ## reach save.json at wave boundaries / run end via Unlockables -- never per kill.
@@ -108,7 +113,7 @@ func _ready() -> void:
 	_hit_stop_timer.one_shot = true
 	_hit_stop_timer.ignore_time_scale = true
 	_hit_stop_timer.process_mode = Node.PROCESS_MODE_ALWAYS
-	_hit_stop_timer.timeout.connect(func() -> void: Engine.time_scale = 1.0)
+	_hit_stop_timer.timeout.connect(_end_hit_stop)
 	add_child(_hit_stop_timer)
 	BulletPool.reset()  # autoloads survive reloads -- park stale bullets
 	PickupPool.reset()  # same for pickups: no leftovers across runs
@@ -590,6 +595,24 @@ func _on_pickup_collected(kind: String) -> void:
 
 func _on_crit_landed() -> void:
 	_crits += 1
+	_crit_hit_stop()
+
+
+## The crit dip. Guarded: the hit-stop timer below cannot be interrupted by a
+## second crit, and it restores even while paused (PROCESS_MODE_ALWAYS +
+## ignore_time_scale), so Engine.time_scale can never be left stuck.
+func _crit_hit_stop() -> void:
+	if _crit_stop_active:
+		return
+	_crit_stop_active = true
+	_crit_stop_count += 1
+	Engine.time_scale = HIT_STOP_SCALE
+	_hit_stop_timer.start(HIT_STOP_TIME)
+
+
+func _end_hit_stop() -> void:
+	Engine.time_scale = 1.0
+	_crit_stop_active = false
 
 
 func _on_charged_shot() -> void:
@@ -630,6 +653,9 @@ func _on_enemy_killed(enemy: EnemyBase) -> void:
 	# "boss / elite killed" counter -- no per-variant type checks here.
 	if enemy.is_in_group("bosses"):
 		_bosses_killed += 1
+		# Boss deaths hit harder than a normal kill: full trauma and a zoom punch.
+		_camera.add_trauma(0.9)
+		_camera.add_punch(1.0)
 	elif enemy.is_in_group("elites"):
 		_elites_killed += 1
 	_hud.set_score(_score)
@@ -656,6 +682,7 @@ func _hit_stop() -> void:
 
 func _on_player_damaged(_amount: int) -> void:
 	_camera.add_trauma(0.55)
+	_hud.flash_hit()
 	DeathBurst.spawn(_effects_layer, _player.global_position, Color(1.0, 0.3, 0.3))
 
 

@@ -143,7 +143,10 @@ func _handle_hit(body: Node2D) -> void:
 		BulletPool.damage_dealt += dealt   # the STATS tab's DPS column
 		if crit:
 			BulletPool.crit_landed.emit()   # lifetime counter, not per-run bookkeeping
-		DamageNumbers.spawn(body.global_position, dealt, crit)
+		# The number carries the enemy's own colour, so a kill reads as WHICH
+		# enemy was hit, not just how hard.
+		var tint: Color = (body as EnemyBase).death_burst_color if body is EnemyBase else Color(0.0, 0.0, 0.0, 0.0)
+		DamageNumbers.spawn(body.global_position, dealt, crit, tint)
 		body.take_damage(dealt, direction * knockback_force)
 		if pierce_left > 0:
 			pierce_left -= 1

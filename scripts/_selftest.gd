@@ -2331,6 +2331,48 @@ func _run(main: Node) -> void:
 	Storage.set_value("salvage", 0)
 	Perks.refresh()
 
+	# -- Juice: crit hit-stop, boss trauma, number colour, hit flash -----------
+	# A crit's slow-motion is guarded: two crits in one tick must not stack a
+	# second dip, and the restore must run even with the tree paused.
+	Engine.time_scale = 1.0
+	main._crit_stop_active = false
+	var crit_count_before: int = main._crit_stop_count
+	main._on_crit_landed()
+	main._on_crit_landed()
+	if main._crit_stop_count != crit_count_before + 1:
+		failed.append("juice: two crits produced %d time-scale dips, expected 1" % (main._crit_stop_count - crit_count_before))
+	if Engine.time_scale >= 1.0:
+		failed.append("juice: a crit did not dip Engine.time_scale (%.2f)" % Engine.time_scale)
+	await main.get_tree().create_timer(main.HIT_STOP_TIME + 0.2, true, false, true).timeout
+	if not is_equal_approx(Engine.time_scale, 1.0):
+		failed.append("juice: Engine.time_scale was not restored after a crit (%.2f)" % Engine.time_scale)
+	if main._crit_stop_active:
+		failed.append("juice: the crit hit-stop stayed active after the dip")
+	# A boss death raises trauma more than a chaser kill.
+	var juice_cam: PlayerCamera = main._camera
+	var trauma_before: float = juice_cam._trauma
+	var juice_boss: EnemyBase = load("res://scenes/enemy_boss.tscn").instantiate() as EnemyBase
+	wm._enemy_container.add_child(juice_boss)
+	main._on_enemy_killed(juice_boss)
+	if juice_cam._trauma <= trauma_before:
+		failed.append("juice: a boss death did not raise camera trauma")
+	# A damage number carries the colour it was spawned with.
+	DamageNumbers.spawn(Vector2.ZERO, 42, false, Color(0.2, 0.8, 0.3))
+	var dn_label: Label = null
+	if not DamageNumbers._labels.is_empty():
+		var dn_index: int = (DamageNumbers._next - 1 + DamageNumbers._labels.size()) % DamageNumbers._labels.size()
+		dn_label = DamageNumbers._labels[dn_index] as Label
+	if dn_label == null or dn_label.get_theme_color("font_color") != Color(0.2, 0.8, 0.3):
+		failed.append("juice: a damage number did not carry the hit colour")
+	# A hit flashes the screen edge, then fades off.
+	main._hud.flash_hit()
+	if not main._hud._hit_flash.visible or main._hud._hit_flash.modulate.a <= 0.0:
+		failed.append("juice: the hit flash never showed")
+	main._hud._process(2.0)
+	if main._hud._hit_flash.visible:
+		failed.append("juice: the hit flash stayed on after its timer")
+	Engine.time_scale = 1.0
+
 	# -- Lit lighting (addons/lit) ---------------------------------------------
 	# The addon lights nothing by itself: a light with no receiver material is just a
 	# node in a group, and a receiver material with no light is a flat ambient multiply.

@@ -20,8 +20,14 @@ const DASH_COOLING_COLOR := Color(0.32, 0.27, 0.42)
 ## `overlay = 1` (only the edges tint). The bar alone is easy to miss while the
 ## player is looking at the middle of the arena.
 @onready var _low_health: ColorRect = $LowHealth
+## Screen-edge flash on a hit: same overlay shader as the low-health warning,
+## driven by one timer, so a hit reads even when the player is looking centre.
+@onready var _hit_flash: ColorRect = $HitFlash
+const HIT_FLASH_TIME := 0.35
+const HIT_FLASH_ALPHA := 0.55
 ## Dash readiness pip, built in _ready beside the health bar.
 var _dash_pip: ColorRect = null
+var _flash_timer: float = 0.0
 
 var _pulse_phase: float = 0.0
 ## Heartbeat timing: a short beat that re-fires sooner as more health is missing.
@@ -32,8 +38,23 @@ const HEARTBEAT_INTERVAL := 0.8
 const HEARTBEAT_MIN_INTERVAL := 0.22
 
 
+## Screen-edge flash when the player is hit. Main calls this; the fade happens in
+## _process, so the flash (like the low-health warning) is one flag and one timer.
+func flash_hit() -> void:
+	_flash_timer = HIT_FLASH_TIME
+	_hit_flash.visible = true
+	_hit_flash.modulate.a = HIT_FLASH_ALPHA
+
+
 func _process(delta: float) -> void:
 	_pulse_phase += delta * 7.0
+	# Hit flash fades before the low-health branch, which returns early at full HP.
+	if _flash_timer > 0.0:
+		_flash_timer = maxf(_flash_timer - delta, 0.0)
+		_hit_flash.modulate.a = HIT_FLASH_ALPHA * (_flash_timer / HIT_FLASH_TIME)
+		_hit_flash.visible = _flash_timer > 0.0
+	elif _hit_flash.visible:
+		_hit_flash.visible = false
 	var ratio: float = 1.0
 	if _health_bar.max_value > 0.0:
 		ratio = _health_bar.value / _health_bar.max_value
@@ -60,6 +81,9 @@ func reset(max_hp: int, score: int) -> void:
 	_health_bar.value = max_hp
 	_health_bar.modulate = Color.WHITE
 	_low_health.visible = false
+	_flash_timer = 0.0
+	if _hit_flash != null:
+		_hit_flash.visible = false
 	set_health(max_hp, max_hp)
 	set_score(score)
 	set_credits(0)

@@ -40,13 +40,17 @@ func _ready() -> void:
 
 
 ## Pop one number. `crit` swaps colour and size so a crit reads at a glance.
-func spawn(world_position: Vector2, value: int, crit: bool = false) -> void:
+## `tint` is the enemy's own colour (optional); a crit overrides it, and an
+## unset tint (alpha 0) falls back to the normal cream. One numbers system, the
+## colour just travels with the hit.
+func spawn(world_position: Vector2, value: int, crit: bool = false,
+		tint: Color = Color(0.0, 0.0, 0.0, 0.0)) -> void:
 	if _labels.is_empty():
 		return
 	var label: Node = _labels[_next]
 	_next = (_next + 1) % _labels.size()
-	label.popup(world_position, value, _crit_color() if crit else NORMAL_COLOR,
-			CRIT_FONT if crit else NORMAL_FONT)
+	var color: Color = _crit_color() if crit else (NORMAL_COLOR if tint.a <= 0.0 else tint)
+	label.popup(world_position, value, color, CRIT_FONT if crit else NORMAL_FONT)
 
 
 ## Unlockable "gold_crits". A method rather than a const because the flag can flip
