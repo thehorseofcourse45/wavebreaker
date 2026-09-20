@@ -15,11 +15,12 @@ func _ready() -> void:
 
 
 func _desired_velocity() -> Vector2:
-	var to_player: Vector2 = _player_position() - global_position
-	var dist: float = to_player.length()
-	if dist < 1.0:
+	# Nav-aware radial so the orbit follows the path around cover instead of
+	# swinging through walls. Distance for the ring is still plain Euclidean.
+	var radial: Vector2 = _dir_toward_player()
+	if radial == Vector2.ZERO:
 		return Vector2.ZERO
-	var radial: Vector2 = to_player / dist
+	var dist: float = _player_position().distance_to(global_position)
 	var tangential := Vector2(-radial.y, radial.x) * spin_dir
 	# Inside the ring: push back out gently; outside: pull in. Steepness via
 	# radial_pull so export tweaking changes the "snap" of the orbit.

@@ -48,7 +48,9 @@ func _ready() -> void:
 	call_deferred("_style_console")
 
 func _draw() -> void:
-	draw_set_transform(Vector2.ZERO, 0, size / Vector2(1280, 720))
+	var scale_factor := minf(size.x / 1280.0, size.y / 720.0)
+	var offset := (size - Vector2(1280, 720) * scale_factor) * 0.5
+	draw_set_transform(offset, 0, Vector2.ONE * scale_factor)
 	draw_rect(Rect2(0, 0, 1280, 720), Color("#0b0919"))
 	# Broad, soft sunset atmosphere.
 	for i in range(32, 0, -1):
@@ -80,7 +82,7 @@ func _draw() -> void:
 		baseline += TITLE_SIZE * 1.05
 	draw_string(_font, Vector2(58, 641), "OUTLAST THE NIGHT.", HORIZONTAL_ALIGNMENT_LEFT, -1, 22, Color("#f3eaff"))
 	draw_string(_font, Vector2(58, 670), "ONE ARENA. ENDLESS WAVES.", HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color("#9f91b8"))
-	draw_string(_font, Vector2(720, 57), strap_text(), HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color("#827794"))
+	draw_string(_font, Vector2(720, 38), strap_text(), HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color("#827794"))
 
 func _style_console() -> void:
 	var menu: CanvasLayer = get_parent()

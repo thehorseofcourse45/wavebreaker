@@ -1,0 +1,15 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/enemy_boss_juggernaut.gd" id="1"]
+[ext_resource type="PackedScene" path="res://scenes/enemy_boss.tscn" id="2"]
+
+[node name="Enemy" instance=ExtResource("2")]
+script = ExtResource("1")
+max_health = 7600
+contact_damage = 42
+move_speed = 68.0
+knockback_resist = 0.97
+charge_speed = 760.0
+charge_time = 1.05
+body_color_full = Color(0.75, 0.18, 0.12, 1)
+body_color_hurt = Color(1, 0.72, 0.08, 1)

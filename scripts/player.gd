@@ -56,6 +56,20 @@ var bullets_per_shot: int = 1
 ## Shop "pierce": how many EXTRA enemies a round passes through before it dies.
 var pierce_count: int = 0
 
+## ---------------------------------------------------------------- weapon ---
+## The run's archetype (see weapons.gd). The shop still mutates fire_rate /
+## bullets_per_shot / pierce_count / bullet_damage on top of it -- a weapon only
+## decides what those start from.
+var weapon_id: String = "rifle"
+## Angle between neighbouring pellets of one volley (the weapon owns it).
+var bullet_spread_deg: float = BULLET_SPREAD_DEG
+## How long a round flies, i.e. the gun's reach. 0 = the bullet scene's own default.
+var bullet_lifetime: float = 0.0
+## Round size, hitbox included. 0 = unscaled.
+var bullet_scale: float = 0.0
+## Per-shot push scale (the slugger shoves, the needler does not).
+var weapon_knockback: float = 1.0
+
 @export_group("Charge shot")
 ## Shop "charge" unlocks this. RMB holds a heavy round; releasing it fires one
 ## big, slow, high-knockback, piercing shot. LMB autofire is deliberately
@@ -111,6 +125,16 @@ var _dash_cooldown_left: float = 0.0
 var _dash_dir: Vector2 = Vector2.ZERO
 ## Pristine bullet_damage from _ready: mutators scale THIS, never the live value.
 var _base_bullet_damage: int = 0
+## The weapon-folded base for the two stats the shop only ever multiplies, so
+## "pristine" survives a purchase (see apply_weapon).
+var _base_fire_rate: float = 0.0
+var _base_bullet_speed: float = 0.0
+## The SCENE's own shooting stats, recorded before any weapon touches them: a weapon
+## is a multiplier of these, so switching guns can never compound.
+var _scene_fire_rate: float = 0.0
+var _scene_bullet_damage: int = 0
+var _scene_bullet_speed: float = 0.0
+var _scene_fire_recoil: float = 0.0
 ## Pristine max_health from _ready -- what a mutator is measured against.
 var _base_max_health: int = 0
 ## Pristine move_speed / damage_reduction from _ready, for perks that scale them.
@@ -139,6 +163,14 @@ func _ready() -> void:
 	_base_max_health = max_health
 	_base_move_speed = move_speed
 	_base_damage_reduction = damage_reduction
+	# The scene's own shooting stats, so a weapon archetype scales THESE and never a
+	# value a previous weapon already wrote.
+	_scene_fire_rate = fire_rate
+	_scene_bullet_damage = bullet_damage
+	_scene_bullet_speed = bullet_speed
+	_scene_fire_recoil = fire_recoil
+	_base_fire_rate = fire_rate
+	_base_bullet_speed = bullet_speed
 	_setup_lighting()
 	_apply_unlockable_skin()
 	# An emissive rim stays readable outside the torch; inherits hit/iframe modulation.
@@ -157,6 +189,32 @@ func _ready() -> void:
 	_body.add_child(core)
 	if OS.get_cmdline_user_args().has("--autofire"):
 		_simulated_fire = true
+
+
+## Make this run's weapon archetype the shooting baseline. Called by Main at every
+## run start (and by the menu's picker), so it is IDEMPOTENT: every number is derived
+## from the pristine scene stats, never from the live ones, and applying the same
+## weapon twice -- or switching guns and back -- lands on exactly the same stats.
+##
+## Order matters with the other run modifiers: this re-derives _base_bullet_damage,
+## which Perks.apply_to_player() and glass cannon scale, so apply the weapon FIRST.
+func apply_weapon(id: String) -> void:
+	var d: Dictionary = Weapons.resolve(id)
+	weapon_id = String(d.get("id", Weapons.DEFAULT_ID))
+	_base_fire_rate = _scene_fire_rate * float(d.get("fire_rate", 1.0))
+	_base_bullet_damage = maxi(1, int(round(float(_scene_bullet_damage) * float(d.get("damage", 1.0)))))
+	_base_bullet_speed = _scene_bullet_speed * float(d.get("speed", 1.0))
+	fire_rate = _base_fire_rate
+	bullet_damage = _base_bullet_damage
+	bullet_speed = _base_bullet_speed
+	fire_recoil = _scene_fire_recoil * float(d.get("recoil", 1.0))
+	bullet_spread_deg = float(d.get("spread_deg", BULLET_SPREAD_DEG))
+	bullet_lifetime = float(d.get("lifetime", 0.0))
+	bullet_scale = float(d.get("scale", 0.0))
+	weapon_knockback = float(d.get("knockback", 1.0))
+	# Absolute bases the shop then ADDS to (so "pierce +1" still means +1).
+	pierce_count = int(d.get("pierce", 0))
+	bullets_per_shot = int(d.get("pellets", 1))
 
 
 ## Unlockable "glass_cannon": the run mutator. Absolute values from the pristine
@@ -346,9 +404,15 @@ func fire_charged(power: float) -> void:
 	# Unlockable "overcharge": the charged round hits harder at the same charge
 	# time -- the shop's "charge" upgrade is still what unlocks firing it at all.
 	var overcharge: float = OVERCHARGE_MULT if Unlockables.is_unlocked("overcharge") else 1.0
+	# The heavy round INHERITS the shop's damage/pierce scaling: bullet_damage
+	# already folds in the "damage" upgrade (and Arsenal), and the "pierce"
+	# upgrade adds on top of the charge's own built-in pierce.
+	# It keeps the SCENE's range on purpose: a furnace's 0.3 s rounds must not turn the
+	# paid-for heavy shot into a stub, so only the size follows the weapon.
 	BulletPool.fire(_muzzle.global_position, dir,
 			int(round(float(bullet_damage) * charge_damage_mult * k * overcharge)),
-			bullet_speed * charge_speed_mult, false, charge_pierce, charge_knockback_mult)
+			bullet_speed * charge_speed_mult, false, charge_pierce + pierce_count,
+			charge_knockback_mult * weapon_knockback, 0.0, bullet_scale)
 	shoot.emit()
 	charged_shot.emit()
 	velocity -= dir * fire_recoil * charge_knockback_mult
@@ -360,12 +424,14 @@ func fire_charged(power: float) -> void:
 func _fire_bullet() -> void:
 	var base_dir: Vector2 = Vector2.RIGHT.rotated(_aim_pivot.rotation)
 	var count: int = maxi(1, bullets_per_shot)
-	# Volley spreads evenly around the aim line: a 1-bullet shot is unchanged,
-	# extra bullets sit +/- k*7 degrees off it.
-	var step: float = deg_to_rad(BULLET_SPREAD_DEG)
+	# Volley spreads evenly around the aim line: a 1-bullet shot sits on it, extra
+	# bullets sit +/- k*spread off it -- the weapon owns the angle, the shop only
+	# multiplies the count.
+	var step: float = deg_to_rad(bullet_spread_deg)
 	for i: int in count:
 		var offset: float = step * (float(i) - float(count - 1) * 0.5)
-		BulletPool.fire(_muzzle.global_position, base_dir.rotated(offset), bullet_damage, bullet_speed, false, pierce_count)
+		BulletPool.fire(_muzzle.global_position, base_dir.rotated(offset), bullet_damage,
+				bullet_speed, false, pierce_count, weapon_knockback, bullet_lifetime, bullet_scale)
 	shoot.emit()
 	velocity -= base_dir * fire_recoil
 	_flash_timer_muzzle = MUZZLE_FLASH_TIME

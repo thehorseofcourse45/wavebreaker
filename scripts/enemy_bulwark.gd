@@ -26,15 +26,11 @@ func _update_behavior(_delta: float) -> void:
 		if other == null or other == self or not is_instance_valid(other):
 			continue
 		if global_position.distance_to(other.global_position) <= aura_radius:
-			# min, not overwrite: with two bulwarks overlapping, the stronger
-			# aura must never be pushed back up by the weaker one.
-			other.damage_taken_mult = minf(other.damage_taken_mult, aura_mult)
+			other.set_damage_reduction_source(get_instance_id(), aura_mult)
 			still_aided.append(other)
 	for prev: EnemyBase in _aided:
-		# Clearing can transiently clobber a second bulwark's grant for one
-		# frame; that bulwark re-applies on its own next tick.
 		if is_instance_valid(prev) and not still_aided.has(prev):
-			prev.damage_taken_mult = 1.0
+			prev.clear_damage_reduction_source(get_instance_id())
 	_aided = still_aided
 
 
@@ -43,5 +39,5 @@ func _exit_tree() -> void:
 	# outlive the body that casts it.
 	for prev: EnemyBase in _aided:
 		if is_instance_valid(prev):
-			prev.damage_taken_mult = 1.0
+			prev.clear_damage_reduction_source(get_instance_id())
 	_aided.clear()

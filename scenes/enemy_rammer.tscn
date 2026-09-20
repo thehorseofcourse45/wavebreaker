@@ -1,0 +1,21 @@
+[gd_scene load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://scripts/enemy_rammer.gd" id="1"]
+[ext_resource type="PackedScene" path="res://scenes/enemy_base.tscn" id="2"]
+[sub_resource type="CircleShape2D" id="rammer_shape"]
+radius = 21.0
+
+[node name="Enemy" instance=ExtResource("2")]
+script = ExtResource("1")
+max_health = 120
+contact_damage = 22
+move_speed = 70.0
+score_value = 32
+knockback_resist = 0.55
+
+[node name="Body" parent="." index="0"]
+color = Color(0.95, 0.2, 0.12, 1)
+polygon = PackedVector2Array(25, 0, 10, -18, -15, -18, -23, 0, -15, 18, 10, 18)
+
+[node name="CollisionShape2D" parent="." index="1"]
+shape = SubResource("rammer_shape")

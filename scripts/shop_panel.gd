@@ -11,17 +11,19 @@ signal resume_pressed
 signal reroll_attempted
 
 ## Unlockable "fast_shop": number keys buy a row without the mouse. Covers rows 1-9
-## (the shop has 13 entries, so the last few stay mouse-only).
+## (a hand is OFFER_COUNT rows, so 9 is plenty).
 const HOTKEY_COUNT := 9
-## Reroll price (paid by Main) and how many rows a rerolled shop offers.
+## Reroll price (paid by Main) and how many rows one shop hand offers. The hand is
+## a RANDOM subset, re-dealt on every wave clear and on a reroll -- the shop never
+## dumps the whole upgrade list at once, so REROLL actually re-deals a new hand.
 const REROLL_COST := 30
-const REROLL_COUNT := 6
+const OFFER_COUNT := 6
 
 var _rows: Dictionary = {}   # id -> {btn, label, row}
 ## Row ids in OFFERED order, so a hotkey maps to a visible row without walking
-## the tree. A reroll rewrites this.
+## the tree. A deal (wave clear or reroll) rewrites this.
 var _row_ids: Array[String] = []
-## Ids currently on offer. All of DEFS until the first reroll.
+## Ids currently on offer -- the hand.
 var _offered: Array[String] = []
 
 @onready var _list: VBoxContainer = %ItemList
@@ -53,21 +55,35 @@ func build(up: Node) -> void:
 		h.add_child(btn)
 		_list.add_child(h)
 		_rows[String(d.id)] = {"btn": btn, "label": lbl, "row": h}
-		_row_ids.append(String(d.id))
-		_offered.append(String(d.id))
+	# One row per DEFS entry exists in `_rows` (Main addresses rows by id), but
+	# only a random hand is OFFERED -- see deal().
+	deal(up)
 
 
-## Re-roll which rows the intermission offers: a random REROLL_COUNT subset, in a
-## fresh order (which is also the new hotkey mapping). Main has already paid.
-func reroll(up: Node, credits: int, player: Node = null) -> void:
+## Deal a fresh hand: OFFER_COUNT random rows drawn from what this run may still
+## sell (skips blocked rows and rows already at max, so an offer is never a dead
+## button). Main calls this on every wave clear; reroll() calls it too.
+func deal(up: Node) -> void:
 	if up == null:
 		return
 	var pool: Array[String] = []
 	for d: Dictionary in up.DEFS:
-		pool.append(String(d.id))
+		var id := String(d.id)
+		if up.is_blocked(id):
+			continue
+		if up.level(id) >= int(d.max_level):
+			continue
+		pool.append(id)
 	pool.shuffle()
-	_offered = pool.slice(0, mini(REROLL_COUNT, pool.size()))
+	_offered = pool.slice(0, mini(OFFER_COUNT, pool.size()))
 	_row_ids = _offered.duplicate()
+
+
+## Re-roll the hand. Main has already paid.
+func reroll(up: Node, credits: int, player: Node = null) -> void:
+	if up == null:
+		return
+	deal(up)
 	refresh(up, credits, player)
 
 
@@ -100,12 +116,11 @@ func refresh(up: Node, credits: int, player: Node = null) -> void:
 		var id := String(d.id)
 		if not _rows.has(id):
 			continue
-		# A rerolled shop hides the rows it is not offering; `_rows` keeps every
-		# button so Main can still address one by id (glass cannon's armor probe).
-		var offered: bool = _offered.has(id)
-		(_rows[id]["row"] as HBoxContainer).visible = offered
-		if not offered:
-			continue
+		# Only the current hand is visible; `_rows` keeps every button so Main can
+		# still address one by id (glass cannon's / no-shop's LOCKED probe reads
+		# the text of a row that need not be on offer). Text is set for every row,
+		# visibility is what the hand controls.
+		(_rows[id]["row"] as HBoxContainer).visible = _offered.has(id)
 		var btn: Button = _rows[id]["btn"]
 		var lbl: Label = _rows[id]["label"]
 		lbl.text = "%s  [%s]" % [String(d.label), up.rarity(id).to_upper()]

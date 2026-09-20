@@ -18,6 +18,21 @@ in code, with a handful of CC0 streams for the music beds.
 | `Esc` | Pause |
 | `R` | Restart (on the game-over screen) |
 
+## Weapons
+
+Pick one on the title screen before a run; it sets the shooting baseline the shop
+then upgrades on top of.
+
+| Gun | Character |
+|-----|-----------|
+| `RIFLE` | Balanced automatic (the default: the baseline every other gun is measured against) |
+| `NEEDLER` | Very fast, light rounds, sloppy at range |
+| `BREACHER` | Five pellets, punishing up close, falls off fast |
+| `VIPER` | Slow, precise, hard-hitting marksman |
+| `LANCE` | Hyper-velocity slug that pierces four enemies in a line |
+| `FURNACE` | Short-range cone of short-lived rounds |
+| `SLUGGER` | Slow hand cannon, pierces one, shoves hard |
+
 ## Run from source
 
 Requires [Godot 4.7](https://godotengine.org/download) (the project uses the

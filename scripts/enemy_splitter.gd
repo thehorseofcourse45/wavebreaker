@@ -1,10 +1,9 @@
 extends EnemyBase
 class_name EnemySplitter
 ## Midsize blob that splits into two mini chasers on death.
-## WaveManager listens for `split_spawned` and re-parents the pair so they
-## count toward the wave's alive total (and must die for the wave to clear).
-
-signal split_spawned(pair: Array)
+## WaveManager listens for `split_spawned` (declared on EnemyBase) and
+## re-parents the pair so they count toward the wave's alive total (and must
+## die for the wave to clear).
 
 @export_group("Splitter")
 @export var mini_scene: PackedScene = preload("res://scenes/enemy_mini.tscn")

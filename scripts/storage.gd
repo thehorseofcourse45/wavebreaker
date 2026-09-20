@@ -13,7 +13,8 @@ const PATH := "user://save.json"
 ## `difficulty`, `glass_cannon` and `boss_rush` are the menu's run preferences --
 ## wiping records must not silently move the player back to NORMAL either.
 const PREFERENCE_KEYS: Array[String] = ["music_volume", "sfx_volume", "endless",
-	"difficulty", "glass_cannon", "boss_rush", "fog", "elite_storm", "no_shop"]
+	"difficulty", "glass_cannon", "boss_rush", "fog", "elite_storm", "no_shop",
+	"weapon"]
 
 
 static func read_all(path: String = PATH) -> Dictionary:

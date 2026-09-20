@@ -16,6 +16,9 @@ signal difficulty_changed(id: String)
 ## Main only ever needs the set.
 signal mutators_changed(glass_cannon: bool, boss_rush: bool, fog: bool,
 		elite_storm: bool, no_shop: bool)
+## The run's weapon archetype (weapons.gd): the menu owns the preference and
+## announces it; Main applies it to the player and re-seeds it on boot.
+signal weapon_changed(id: String)
 
 const Storage := preload("res://scripts/storage.gd")
 ## A second click inside this window is the confirmation that wipes the records.
@@ -41,6 +44,11 @@ const RESET_CONFIRM_WINDOW := 4.0
 var _reset_armed: bool = false
 var _reset_timer: Timer = null
 var _difficulty_buttons: Dictionary = {}   # id -> Button
+## The weapon dropdown. Built in code and parked in the Mutators row rather than
+## authored into the scene: a new row costs ~40 px of a card that is already
+## within ~7 px of its 715 px guard at 720p, and the row is the run-options row
+## anyway. Builder, not .tscn, so nobody has to reload the scene from disk.
+var _weapon_picker: OptionButton = null
 
 
 func _ready() -> void:
@@ -59,6 +67,7 @@ func _ready() -> void:
 	add_child(_reset_timer)
 	_reset_button.pressed.connect(_on_reset_pressed)
 	_build_difficulty_buttons()
+	_build_weapon_picker()
 	# set_pressed_no_signal: reflecting a saved preference must not re-write it
 	# (and on boot that would rewrite the save file on every launch).
 	_endless_check.set_pressed_no_signal(bool(Storage.get_value("endless", true)))
@@ -159,6 +168,55 @@ func _on_endless_toggled(enabled: bool) -> void:
 	endless_toggled.emit(enabled)
 
 
+# ---------------------------------------------------------------- weapons ---
+
+## One dropdown entry per registry row, in registry order, so adding a weapon is a
+## row in weapons.gd and nothing here. `metadata` carries the id: the item index is
+## a display detail and must never be the thing written to the save.
+func _build_weapon_picker() -> void:
+	if is_instance_valid(_weapon_picker):
+		return
+	_weapon_picker = OptionButton.new()
+	_weapon_picker.name = "WeaponPicker"
+	_weapon_picker.custom_minimum_size = Vector2(132, 0)
+	_weapon_picker.focus_mode = Control.FOCUS_NONE
+	for i: int in Weapons.ids().size():
+		var id: String = Weapons.ids()[i]
+		_weapon_picker.add_item(Weapons.display_name(id), i)
+		_weapon_picker.set_item_metadata(i, id)
+	_weapon_picker.item_selected.connect(_on_weapon_selected)
+	_mutators_row.add_child(_weapon_picker)
+
+
+## Called by Main on boot and on every menu re-entry. select() does not emit
+## item_selected (only a user pick does), so reflecting the saved gun cannot
+## re-write the save on launch -- the same rule as the ENDLESS toggle.
+func set_weapon(id: String) -> void:
+	if not is_instance_valid(_weapon_picker):
+		return
+	var want: String = String(Weapons.resolve(id).id)
+	for i: int in _weapon_picker.item_count:
+		if String(_weapon_picker.get_item_metadata(i)) == want:
+			_weapon_picker.select(i)
+			break
+	_update_weapon_tooltip()
+
+
+func _on_weapon_selected(index: int) -> void:
+	var id: String = String(_weapon_picker.get_item_metadata(index))
+	Storage.set_value(Weapons.SAVE_KEY, id)
+	_update_weapon_tooltip()
+	weapon_changed.emit(id)
+
+
+## The row is a bare list of toggle labels, so the gun's own hint has to live in the
+## tooltip: "LANCE" alone does not say it pierces.
+func _update_weapon_tooltip() -> void:
+	var at: int = _weapon_picker.selected
+	var id: String = String(_weapon_picker.get_item_metadata(at)) if at >= 0 else Weapons.DEFAULT_ID
+	_weapon_picker.tooltip_text = "%s - %s" % [Weapons.display_name(id), Weapons.hint(id)]
+
+
 # --------------------------------------------------------------- mutators ---
 
 ## Called by Main on boot and on every menu re-entry. Glass cannon and boss rush
@@ -209,6 +267,9 @@ func _on_reset_pressed() -> void:
 	# row may shrink back (nightmare was earned).
 	Unlockables.refresh()
 	set_difficulty(String(Storage.get_value("difficulty", "normal")))
+	# The gun preference survives (it is in Storage.PREFERENCE_KEYS), so the picker
+	# only needs to be re-read, not rebuilt.
+	set_weapon(String(Storage.get_value(Weapons.SAVE_KEY, Weapons.DEFAULT_ID)))
 	# The toggles are preferences and survive, but their unlockables are gone.
 	refresh_run_options(_glass_check.button_pressed, _boss_check.button_pressed,
 			_fog_check.button_pressed, _elite_check.button_pressed, _no_shop_check.button_pressed)

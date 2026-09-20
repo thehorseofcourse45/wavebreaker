@@ -6,13 +6,15 @@ extends Node
 const Storage := preload("res://scripts/storage.gd")
 
 ## A maxed build must need at least this long to clear the wave-10 ENCOUNTER
-## (both bosses, killed back to back). Measured at boss_count=2 x 3750 base hp;
+## (both bosses, killed back to back). Measured at boss_count=2 x 5500 base hp;
 ## raise it together with the boss's max_health / boss_count for a longer fight.
-const MIN_BOSS_FIGHT_SECONDS := 5.0
+const MIN_BOSS_FIGHT_SECONDS := 8.0
 
 func attach_to(main: Node) -> void:
 	if "NEON_TEST" in OS.get_cmdline_args():
 		call_deferred("_run", main)
+	else:
+		queue_free()
 
 func _run(main: Node) -> void:
 	await main.get_tree().create_timer(0.3).timeout
@@ -47,7 +49,7 @@ func _run(main: Node) -> void:
 	if player.fire_rate >= base_rate:
 		failed.append("fire_rate should have shrunk after buy")
 
-	var r0: Dictionary = up.buy("damage", 40, player)
+	var r0: Dictionary = up.buy("damage", 80, player)
 	if not bool(r0.ok):
 		failed.append("buy damage ok")
 	if player.bullet_damage != base_damage + 4:
@@ -57,12 +59,12 @@ func _run(main: Node) -> void:
 	# gate: only 39 credits, second purchase should fail
 	var r1: Dictionary = up.buy("damage", 39, player)
 	if bool(r1.ok):
-		failed.append("53-cost purchase with 39 should fail")
+		failed.append("124-cost purchase with 39 should fail")
 	# max level
 	for i in range(20):
 		up.buy("max_hp", 99999, player)
-	if up.level("max_hp") != 6:
-		failed.append("max_hp capped at 6, got %d" % up.level("max_hp"))
+	if up.level("max_hp") != 4:
+		failed.append("max_hp capped at 4, got %d" % up.level("max_hp"))
 	var r2: Dictionary = up.buy("max_hp", 99999, player)
 	if bool(r2.ok):
 		failed.append("buy past max should fail")
@@ -290,6 +292,32 @@ func _run(main: Node) -> void:
 		elif arena_path[0].distance_to(arena_from) > 30.0:
 			failed.append("arena: spawn %s at %s sits %.0f px off the navmesh (no walkable ground there)" % [arena_sp.name, str(arena_from), arena_path[0].distance_to(arena_from)])
 
+	# -- Pathfinding: an off-mesh target must not flip agents to straight-line --
+	# The player stands a few px off the navmesh whenever it hugs a wall (the bake
+	# insets walkable ground by the agent radius). Targeting that raw point once
+	# made is_target_reachable() false, which flipped EVERY enemy to straight-line
+	# steering -- the whole horde ignoring cover. The fix snaps the target to the
+	# nearest mesh point. Drive a chaser at an off-mesh probe and prove it keeps a
+	# path instead of beelining.
+	var pn_probe := Node2D.new()
+	pn_probe.global_position = Vector2(-795, 0)   # between the wall face and the mesh
+	main.add_child(pn_probe)
+	var pn_enemy: Node = load("res://scenes/enemy_chaser.tscn").instantiate()
+	pn_enemy.global_position = Vector2(200, 0)
+	wm._enemy_container.add_child(pn_enemy)
+	pn_enemy._player = pn_probe   # force the agent to chase the off-mesh point
+	for pn_i in 20:
+		await main.get_tree().physics_frame
+	var pn_snapped: Vector2 = NavigationServer2D.map_get_closest_point(arena_map, pn_probe.global_position)
+	if pn_probe.global_position.distance_to(pn_snapped) < 5.0:
+		failed.append("pathfinding: the probe point was not off the navmesh (test setup)")
+	if pn_enemy.get_node("NavAgent").target_position.distance_to(pn_snapped) > 2.0:
+		failed.append("pathfinding: the agent did not snap its target onto the navmesh")
+	if pn_enemy._nav_fallback:
+		failed.append("pathfinding: an off-mesh target flipped the agent to straight-line steering")
+	pn_enemy.queue_free()
+	pn_probe.queue_free()
+
 	# -- Enemy scenes have valid bodies + scripts -----------------------------
 	for scene_path in ["res://scenes/enemy_weaver.tscn", "res://scenes/enemy_orbiter.tscn",
 			"res://scenes/enemy_shooter.tscn", "res://scenes/enemy_splitter.tscn",
@@ -375,10 +403,21 @@ func _run(main: Node) -> void:
 		await main.get_tree().physics_frame
 	if ward.damage_taken_mult >= 1.0:
 		failed.append("bulwark: aura never re-engaged after the neighbour returned")
+	# A second overlapping source must keep the ward protected when the first
+	# source leaves; this is the regression for source-clobbering auras.
+	var bulwark_two: Node = load("res://scenes/enemy_bulwark.tscn").instantiate()
+	bulwark_two.position = Vector2(-420, -320)
+	wm._enemy_container.add_child(bulwark_two)
+	for i in 3:
+		await main.get_tree().physics_frame
 	bulwark.queue_free()
 	await main.get_tree().process_frame
+	if ward.damage_taken_mult >= 1.0:
+		failed.append("bulwark: one source leaving erased an overlapping aura")
+	bulwark_two.queue_free()
+	await main.get_tree().process_frame
 	if not is_equal_approx(ward.damage_taken_mult, 1.0):
-		failed.append("bulwark: the aura outlived the bulwark (mult %.2f)" % ward.damage_taken_mult)
+		failed.append("bulwark: the aura outlived all bulwarks (mult %.2f)" % ward.damage_taken_mult)
 	ward.queue_free()
 	leaper.queue_free()
 
@@ -392,17 +431,21 @@ func _run(main: Node) -> void:
 	if not aff_fixture._affix_shielded:
 		failed.append("affix shielded: shield never came up in _ready")
 	var aff_hp0: int = aff_fixture.health
-	aff_fixture.take_damage(10)
+	var blocked_damage: int = aff_fixture.take_damage(10)
 	if aff_fixture.health != aff_hp0:
 		failed.append("affix shielded: damage leaked through a raised shield")
+	if blocked_damage != 0:
+		failed.append("damage accounting: a raised shield reported %d applied damage" % blocked_damage)
 	aff_fixture._affix_shield_timer = 0.01   # force the toggle on the next tick
 	var aff_shield_frames := 0
 	while aff_fixture._affix_shielded and aff_shield_frames < 30:
 		await main.get_tree().physics_frame
 		aff_shield_frames += 1
-	aff_fixture.take_damage(10)
+	var applied_damage: int = aff_fixture.take_damage(10)
 	if aff_fixture.health != aff_hp0 - 10:
 		failed.append("affix shielded: %d damage in the down window, expected 10" % (aff_hp0 - aff_fixture.health))
+	if applied_damage != 10:
+		failed.append("damage accounting: an open hit reported %d applied damage, expected 10" % applied_damage)
 	aff_fixture.queue_free()
 
 	# Frenzied: measurably further over the same frames, its tint reaches the
@@ -475,6 +518,131 @@ func _run(main: Node) -> void:
 	await main.get_tree().process_frame
 	if 400 - arch_player.health != 0:
 		failed.append("affix volatile: the blast reached %d px out (radius is %d)" % [500, EnemyBase.VOLATILE_RADIUS])
+	arch_player.max_health = base_hp
+	arch_player.health = base_hp
+
+	# -- New affixes: regenerating / teleporting / reflective / splitting / vampiric / warded --
+	# Scene-free modifiers, so every probe drives the hook directly on a throwaway
+	# chaser instead of authoring a fixture scene.
+	var aff_saved_alive_new: int = wm._alive
+	# Suppress drops for this block: these kills must not leave stray pickups for
+	# the pickup probe below (or shift its collect count).
+	var na_saved_drop: float = main.pickup_drop_chance
+	main.pickup_drop_chance = 0.0
+	arch_player.global_position = Vector2.ZERO
+	arch_player.velocity = Vector2.ZERO
+	arch_player.is_alive = true
+	arch_player.max_health = 400
+	arch_player.health = 400
+	arch_player._invuln_timer = 0.0
+
+	# Regenerating: heals back up over time after taking damage.
+	var regen_ch: Node = load("res://scenes/enemy_chaser.tscn").instantiate()
+	regen_ch.affix = "regenerating"
+	regen_ch.position = Vector2(-320, 300)
+	wm._enemy_container.add_child(regen_ch)
+	await main.get_tree().physics_frame
+	regen_ch.take_damage(int(regen_ch.max_health / 2))
+	var regen_hurt: int = regen_ch.health
+	for regen_i in 30:
+		await main.get_tree().physics_frame
+	if regen_ch.health <= regen_hurt:
+		failed.append("affix regenerating: health never climbed back (%d -> %d)" % [regen_hurt, regen_ch.health])
+	regen_ch.queue_free()
+
+	# Teleporting: a timer-driven hop closes on the player.
+	var tele_ch: Node = load("res://scenes/enemy_chaser.tscn").instantiate()
+	tele_ch.affix = "teleporting"
+	tele_ch.position = Vector2(-420, 0)
+	wm._enemy_container.add_child(tele_ch)
+	await main.get_tree().physics_frame
+	var tele_before: float = tele_ch.global_position.distance_to(arch_player.global_position)
+	tele_ch._affix_teleport_timer = 0.01
+	var na_tele_frames := 0
+	while tele_ch._affix_teleport_timer > 0.0 and na_tele_frames < 20:
+		await main.get_tree().physics_frame
+		na_tele_frames += 1
+	var tele_after: float = tele_ch.global_position.distance_to(arch_player.global_position)
+	if tele_after >= tele_before - 60.0:
+		failed.append("affix teleporting: hop did not close on the player (%.0f -> %.0f)" % [tele_before, tele_after])
+	tele_ch.queue_free()
+
+	# Reflective: a hit inside the window lands no damage and becomes a hostile round.
+	var refl_ch: Node = load("res://scenes/enemy_chaser.tscn").instantiate()
+	refl_ch.affix = "reflective"
+	refl_ch.position = Vector2(260, 260)
+	wm._enemy_container.add_child(refl_ch)
+	await main.get_tree().physics_frame
+	var refl_hp: int = refl_ch.health
+	var refl_hostile_before: int = _count_hostile_active()
+	refl_ch.take_damage(10)
+	if refl_ch.health != refl_hp:
+		failed.append("affix reflective: damage landed inside the window")
+	if _count_hostile_active() <= refl_hostile_before:
+		failed.append("affix reflective: the hit was not reflected back")
+	BulletPool.reset()
+	refl_ch.queue_free()
+
+	# Splitting: death emits its minis (the WaveManager re-parents and counts them).
+	var split_ch: Node = load("res://scenes/enemy_chaser.tscn").instantiate()
+	split_ch.affix = "splitting"
+	split_ch.position = Vector2(0, -420)
+	wm._enemy_container.add_child(split_ch)
+	await main.get_tree().physics_frame
+	# Direct-added enemies are not wired to the WaveManager's split handler (only
+	# registry spawns are), so listen for the signal the affix emits -- the same
+	# contract the splitter is tested against.
+	var split_pair: Array = []
+	split_ch.split_spawned.connect(func(pair: Array) -> void: split_pair.append_array(pair))
+	split_ch.take_damage(99999)
+	await main.get_tree().process_frame
+	if split_pair.size() != int(EnemyBase.AFFIXES["splitting"]["count"]):
+		failed.append("affix splitting: death produced %d minis, expected %d" % [split_pair.size(), int(EnemyBase.AFFIXES["splitting"]["count"])])
+	for split_mini: Node in split_pair:
+		split_mini.free()
+
+	# Vampiric: the heal hook raises health by the table's amount.
+	var vamp_ch: Node = load("res://scenes/enemy_chaser.tscn").instantiate()
+	vamp_ch.affix = "vampiric"
+	vamp_ch.position = Vector2(-200, -200)
+	wm._enemy_container.add_child(vamp_ch)
+	await main.get_tree().physics_frame
+	vamp_ch.take_damage(10)
+	var vamp_hurt: int = vamp_ch.health
+	vamp_ch._vampiric_heal()
+	var vamp_want: int = mini(vamp_hurt + int(EnemyBase.AFFIXES["vampiric"]["heal"]), vamp_ch.max_health)
+	if vamp_ch.health != vamp_want:
+		failed.append("affix vampiric: heal left health at %d, expected %d" % [vamp_ch.health, vamp_want])
+	vamp_ch.queue_free()
+
+	# Warded: the first hit lands, the next hit inside the window does not.
+	var ward_ch: Node = load("res://scenes/enemy_chaser.tscn").instantiate()
+	ward_ch.affix = "warded"
+	ward_ch.position = Vector2(200, -200)
+	wm._enemy_container.add_child(ward_ch)
+	await main.get_tree().physics_frame
+	var na_ward_hp: int = ward_ch.health
+	ward_ch.take_damage(10)
+	if ward_ch.health != na_ward_hp - 10:
+		failed.append("affix warded: the first hit did not land (%d -> %d)" % [na_ward_hp, ward_ch.health])
+	var ward_mid: int = ward_ch.health
+	ward_ch.take_damage(10)
+	if ward_ch.health != ward_mid:
+		failed.append("affix warded: a hit landed inside the ward window")
+	ward_ch.queue_free()
+
+	# Tint must reach _base_color (applied before the halo is built) for a new
+	# tint-only affix, mirroring the frenzied/volatile trap checks.
+	var tint_probe: Node = load("res://scenes/enemy_chaser.tscn").instantiate()
+	tint_probe.affix = "regenerating"
+	wm._enemy_container.add_child(tint_probe)
+	await main.get_tree().physics_frame
+	if tint_probe._base_color != EnemyBase.AFFIXES["regenerating"]["tint"]:
+		failed.append("affix regenerating: the tint never reached _base_color")
+	tint_probe.queue_free()
+
+	wm._alive = aff_saved_alive_new
+	main.pickup_drop_chance = na_saved_drop
 	arch_player.max_health = base_hp
 	arch_player.health = base_hp
 
@@ -726,6 +894,10 @@ func _run(main: Node) -> void:
 
 	# -- Charge shot: exactly ONE heavy round, scaled, no pool clone ----------
 	player.charge_unlocked = true
+	# The heavy round scales with the shop: give the player a pierce upgrade and
+	# prove the charged round inherits it on top of its own built-in pierce.
+	var ch_saved_pierce: int = player.pierce_count
+	player.pierce_count = 2
 	# Identify the heavy round by IDENTITY (a leftover probe round may still be
 	# flying, and pool-slot order is not fire order).
 	var ch_before_ids: Array[int] = []
@@ -745,11 +917,12 @@ func _run(main: Node) -> void:
 			failed.append("charge damage %d, expected %d" % [ch_round.damage, ch_want_damage])
 		if not is_equal_approx(ch_round.speed, player.bullet_speed * player.charge_speed_mult):
 			failed.append("charge speed %.0f, expected %.0f" % [ch_round.speed, player.bullet_speed * player.charge_speed_mult])
-		if ch_round.pierce_left != player.charge_pierce:
-			failed.append("charge pierce %d, expected %d" % [ch_round.pierce_left, player.charge_pierce])
+		if ch_round.pierce_left != player.charge_pierce + player.pierce_count:
+			failed.append("charge pierce %d, expected %d (charge_pierce + pierce upgrade)" % [ch_round.pierce_left, player.charge_pierce + player.pierce_count])
 		var ch_want_kb: float = BulletPool.base_knockback * player.charge_knockback_mult
 		if not is_equal_approx(ch_round.knockback_force, ch_want_kb):
 			failed.append("charge knockback %.0f, expected %.0f" % [ch_round.knockback_force, ch_want_kb])
+	player.pierce_count = ch_saved_pierce
 	player.charge_unlocked = false
 	BulletPool.reset()
 
@@ -1333,8 +1506,11 @@ func _run(main: Node) -> void:
 		boss.set_deferred("global_position", Vector2(0, -520))
 		await main.get_tree().physics_frame
 		var hostile_before: int = _count_hostile_active()
-		for i in 85:
-			await main.get_tree().physics_frame
+		# Fire the volley DIRECTLY: the ring timer's phase depends on how long the
+		# boss has been alive, and counting a timer-driven volley is a coin flip on
+		# whether the window catches one. The probe's subject is the volley itself.
+		boss._fire_ring()
+		await main.get_tree().physics_frame
 		var hostile_spawned: int = _count_hostile_active() - hostile_before
 		if hostile_spawned < int(boss.ring_bullets):
 			failed.append("boss: no bullet-hell volley appeared (%d hostile rounds after 1.4s)" % hostile_spawned)
@@ -1441,6 +1617,12 @@ func _run(main: Node) -> void:
 		# The player spawns inside the fortress: every spawn point must be able to
 		# path in, or waves never clear in the arena.
 		var deep_map: RID = (main.get_node("World") as Node2D).get_world_2d().navigation_map
+		# Let the fresh region sync before pathing: the swap frees the old World and
+		# the server registers the new navmesh a few frames later, so a path query
+		# on the very next frame can spuriously come back empty.
+		for deep_wait: int in 12:
+			await main.get_tree().physics_frame
+		NavigationServer2D.map_force_update(deep_map)
 		for deep_sp: Node in deep_spawns:
 			var deep_from: Vector2 = (deep_sp as Node2D).global_position
 			if NavigationServer2D.map_get_path(deep_map, deep_from, carried_player.global_position, true).size() < 2:
@@ -1564,11 +1746,13 @@ func _run(main: Node) -> void:
 		failed.append("menu: the best label still shows the wiped record")
 	menu._disarm_reset()
 
-	# -- ENDLESS off: clearing the last authored wave ends the run ------------
+	# -- ENDLESS off: the finite run reaches a boss + arena transition, then ends --
 	# Also proves the ending does NOT announce wave_cleared, which is what would
 	# open the shop over the game-over panel.
 	wm.is_running = true
-	wm.current_wave = wm.wave_table.size()
+	if wm.finite_wave_count() <= WaveManager.BOSS_EVERY:
+		failed.append("endless off: finite run still ends before its first arena transition")
+	wm.current_wave = wm.finite_wave_count()
 	wm._alive = 0
 	wm._spawn_queue.clear()
 	wm.endless = false
@@ -1579,7 +1763,7 @@ func _run(main: Node) -> void:
 	wm.game_over.connect(func() -> void: finite_over[0] = true)
 	wm._on_enemy_died(null)
 	if not bool(finite_over[0]):
-		failed.append("endless off: clearing the last authored wave did not end the run")
+		failed.append("endless off: clearing the final campaign wave did not end the run")
 	if bool(finite_cleared[0]):
 		failed.append("endless off: the final wave raised wave_cleared too -- the shop would open over the ending")
 	wm.endless = true
@@ -1643,8 +1827,11 @@ func _run(main: Node) -> void:
 		failed.append("difficulty: HARD did not raise the wave hp multiplier (%.2f vs %.2f)" % [diff_hard_hp, diff_normal_hp])
 	if diff_hard_gap >= diff_normal_gap:
 		failed.append("difficulty: HARD did not tighten the spawn interval (%.2f vs %.2f)" % [diff_hard_gap, diff_normal_gap])
-	if not is_equal_approx(diff_normal_hp, float(wm.wave_table[0].get("hp_mult", 1.0))):
-		failed.append("difficulty: NORMAL no longer matches the wave table (%.2f)" % diff_normal_hp)
+	# NORMAL is the wave table scaled by its own difficulty hp row (the row is no
+	# longer 1.0 after the global difficulty bump).
+	var diff_normal_expected: float = float(wm.wave_table[0].get("hp_mult", 1.0)) * float(WaveManager.DIFFICULTIES["normal"]["hp"])
+	if not is_equal_approx(diff_normal_hp, diff_normal_expected):
+		failed.append("difficulty: NORMAL is not the wave table x its hp row (%.2f vs %.2f)" % [diff_normal_hp, diff_normal_expected])
 	wm.difficulty = diff_was
 	wm.hard_arena = diff_hard_arena
 	wm._spawn_timer.wait_time = wm.spawn_interval
@@ -1668,11 +1855,12 @@ func _run(main: Node) -> void:
 	if pm_tabs == null:
 		failed.append("pause: the tab container is missing")
 	else:
-		if pm_tabs.get_tab_count() != 3:
-			failed.append("pause: expected 3 tabs (MENU/UNLOCKABLES/PERKS), found %d" % pm_tabs.get_tab_count())
+		if pm_tabs.get_tab_count() != 4:
+			failed.append("pause: expected 4 owned tabs, found %d" % pm_tabs.get_tab_count())
 		elif pm_tabs.get_tab_title(0) != "MENU" or pm_tabs.get_tab_title(1) != "UNLOCKABLES" \
-				or pm_tabs.get_tab_title(2) != "PERKS":
-			failed.append("pause: tab titles are '%s' / '%s' / '%s'" % [pm_tabs.get_tab_title(0), pm_tabs.get_tab_title(1), pm_tabs.get_tab_title(2)])
+				or pm_tabs.get_tab_title(2) != "STATS" or pm_tabs.get_tab_title(3) != "PERKS" \
+				or not pm_tabs.is_tab_hidden(2):
+			failed.append("pause: tab ownership/order or locked STATS visibility is wrong")
 		pm_tabs.current_tab = 1
 		await main.get_tree().process_frame
 		var unlock_tab: Control = pm_tabs.get_current_tab_control() as Control
@@ -2027,21 +2215,37 @@ func _run(main: Node) -> void:
 	market_up.free()
 
 	# fast_shop: keys 1-9, routed through the same signal a button press uses.
+	# The shop deals a RANDOM hand now, so find the first row that is actually
+	# buyable and press ITS hotkey (and fund Main: it pays, the label does not).
 	var shop_probe: CanvasLayer = main.get_node("UI/ShopPanel") as CanvasLayer
-	var first_row: String = String(shop_probe._row_ids[0])
+	var fj_saved_credits: int = main._credits
+	main._credits = 9999
+	shop_probe.deal(live_upgrades)
 	_set_unlock_flags({})
-	shop_probe.show_shop(live_upgrades, 9999)
-	var level_before: int = live_upgrades.level(first_row)
-	shop_probe.call("_unhandled_key_input", _key_event(KEY_1))
-	if live_upgrades.level(first_row) != level_before:
-		failed.append("unlockables: a number key bought something while fast_shop was locked")
-	_set_unlock_flags({"fast_shop": true})
-	var spend: int = live_upgrades.cost(first_row)
-	shop_probe.show_shop(live_upgrades, spend)
-	shop_probe.call("_unhandled_key_input", _key_event(KEY_1))
-	if live_upgrades.level(first_row) != level_before + 1:
-		failed.append("unlockables: key 1 did not buy the first shop row")
+	shop_probe.show_shop(live_upgrades, 9999, live_player)
+	var fj_row: String = ""
+	var fj_index: int = -1
+	for fj_i in shop_probe._row_ids.size():
+		var fj_id: String = String(shop_probe._row_ids[fj_i])
+		if (shop_probe._rows[fj_id]["btn"] as Button).disabled:
+			continue
+		fj_row = fj_id
+		fj_index = fj_i
+		break
+	if fj_row == "":
+		failed.append("unlockables: the fast_shop hand offered no buyable row")
+	else:
+		var fj_level_before: int = live_upgrades.level(fj_row)
+		shop_probe.call("_unhandled_key_input", _key_event(KEY_1 + fj_index))
+		if live_upgrades.level(fj_row) != fj_level_before:
+			failed.append("unlockables: a number key bought something while fast_shop was locked")
+		_set_unlock_flags({"fast_shop": true})
+		shop_probe.show_shop(live_upgrades, 9999, live_player)
+		shop_probe.call("_unhandled_key_input", _key_event(KEY_1 + fj_index))
+		if live_upgrades.level(fj_row) != fj_level_before + 1:
+			failed.append("unlockables: hotkey %d did not buy the offered row" % (fj_index + 1))
 	shop_probe.hide_shop()
+	main._credits = fj_saved_credits
 
 	# boss_track_2: a second boss bed, picked at random. Counted over a handful of
 	# picks -- both beds must show up (2^-n chance of a false pass).
@@ -2147,6 +2351,10 @@ func _run(main: Node) -> void:
 		failed.append("unlockables: the menu card went missing")
 	elif menu_card.get_combined_minimum_size().y > 715.0:
 		failed.append("unlockables: the menu card wants %.0f px of a 720 px window with the mutators shown" % menu_card.get_combined_minimum_size().y)
+	# Height is not the only axis: the weapon picker rides in the mutators row, and a
+	# row that outgrows the card is CLIPPED rather than wrapped (the card is centred).
+	elif menu_card.get_combined_minimum_size().x > 1000.0:
+		failed.append("unlockables: the menu card wants %.0f px wide with the mutators shown -- the widest state must still fit a small window" % menu_card.get_combined_minimum_size().x)
 	main._menu.refresh_run_options(false, false)
 
 	# -- Run mutators: fog, elite storm, no shop --------------------------------
@@ -2247,16 +2455,16 @@ func _run(main: Node) -> void:
 		if vault_nav == null or vault_nav.navigation_polygon == null or vault_nav.navigation_polygon.get_polygon_count() == 0:
 			failed.append("unlockables: the vault has no baked navmesh")
 
-	# run_stats: the third tab, absent until earned, filled from Main + the save.
+	# run_stats: the third tab, hidden until earned, filled from Main + the save.
 	var stats_tab: TabContainer = pm_tabs
 	_set_unlock_flags({})
 	pm.refresh_stats({})
-	if pm._stats_page.get_parent() != null:
+	if not stats_tab.is_tab_hidden(pm._stats_page.get_index()):
 		failed.append("unlockables: the STATS tab is in the strip while locked")
 	var size_without_stats: Vector2 = stats_tab.get_combined_minimum_size()
 	_set_unlock_flags({"run_stats": true})
 	pm.refresh_stats({"wave": 7, "kills": 30, "score": 900, "credits": 120, "seconds": 60.0, "damage": 6000})
-	if pm._stats_page.get_parent() != stats_tab:
+	if pm._stats_page.get_parent() != stats_tab or stats_tab.is_tab_hidden(pm._stats_page.get_index()):
 		failed.append("unlockables: the STATS tab never appeared")
 	else:
 		if (pm._stats_values["dps"] as Label).text != "100.0":
@@ -2275,7 +2483,7 @@ func _run(main: Node) -> void:
 			failed.append("unlockables: the STATS tab names a difficulty the menu still hides")
 	_set_unlock_flags({})
 	pm.refresh_stats({})
-	if pm._stats_page.get_parent() != null:
+	if not stats_tab.is_tab_hidden(pm._stats_page.get_index()):
 		failed.append("unlockables: the STATS tab stayed after the unlockable went away")
 
 	# -- Meta-progression: salvage banks, wipes with RESET, perks persist -------
@@ -2515,8 +2723,8 @@ func _run(main: Node) -> void:
 	# The fourth arena is a list entry + a baked scene; the coverage probe below
 	# walks ARENA_SCENES, so a missing registration is caught here, not by editing
 	# that loop.
-	if main.ARENA_SCENES.size() < 4:
-		failed.append("arena coverage: no fourth arena registered in ARENA_SCENES")
+	if main.ARENA_SCENES.size() < 7:
+		failed.append("arena coverage: expected 7 arenas in ARENA_SCENES, found %d" % main.ARENA_SCENES.size())
 	else:
 		var nexus_scene: String = main.ARENA_SCENES[3]
 		if not ResourceLoader.exists(nexus_scene):
@@ -2551,11 +2759,71 @@ func _run(main: Node) -> void:
 					nexus_map, nexus_from, nexus_player.global_position, true)
 			if nexus_path.size() < 2 or nexus_path[0].distance_to(nexus_from) > 30.0:
 				failed.append("arena coverage: arena 4 spawn %s cannot reach the player" % nexus_sp.name)
-		# Rotation from the last arena steps to the next ungated one, wrapping and
-		# skipping arena 1 (it is the start, not a destination).
+		# Arenas 5-7 (citadel / rift / foundry): ungated list entries with baked
+		# navmeshes, walkable spawns and paths to the player. Generic, so a future
+		# arena only has to be registered + baked to be covered here.
+		for extra_index: int in range(4, main.ARENA_SCENES.size()):
+			var extra_scene: String = main.ARENA_SCENES[extra_index]
+			if not ResourceLoader.exists(extra_scene):
+				failed.append("arena coverage: arena %d scene is missing (%s)" % [extra_index + 1, extra_scene])
+				continue
+			_set_unlock_flags({})
+			main._switch_arena(extra_index)
+			if main._arena_index != extra_index:
+				failed.append("arena coverage: arena %d did not swap in (index %d)" % [extra_index + 1, main._arena_index])
+				continue
+			var extra_world: Node2D = main.get_node("World") as Node2D
+			var extra_nav := extra_world.get_node_or_null("NavRegion") as NavigationRegion2D
+			if extra_nav == null or extra_nav.navigation_polygon == null \
+					or extra_nav.navigation_polygon.get_polygon_count() == 0:
+				failed.append("arena coverage: arena %d has no baked navmesh" % (extra_index + 1))
+			var extra_map: RID = extra_world.get_world_2d().navigation_map
+			for extra_settle: int in 12:
+				await main.get_tree().physics_frame
+			NavigationServer2D.map_force_update(extra_map)
+			var extra_spawns: Array[Node] = main.get_tree().get_nodes_in_group("spawn_points")
+			if extra_spawns.size() < 4:
+				failed.append("arena coverage: arena %d has %d spawn points, expected at least 4" % [extra_index + 1, extra_spawns.size()])
+			var extra_space: PhysicsDirectSpaceState2D = extra_world.get_world_2d().direct_space_state
+			var extra_shape := CircleShape2D.new()
+			extra_shape.radius = 20.0
+			var extra_player: Node2D = main.get_node("World/Player") as Node2D
+			for extra_sp: Node in extra_spawns:
+				var extra_from: Vector2 = (extra_sp as Node2D).global_position
+				var extra_q := PhysicsShapeQueryParameters2D.new()
+				extra_q.shape = extra_shape
+				extra_q.collision_mask = 8
+				extra_q.transform = Transform2D(0.0, extra_from)
+				if not extra_space.intersect_shape(extra_q, 1).is_empty():
+					failed.append("arena coverage: arena %d spawn %s sits in wall/obstacle geometry" % [extra_index + 1, extra_sp.name])
+				var extra_path: PackedVector2Array = NavigationServer2D.map_get_path(
+						extra_map, extra_from, extra_player.global_position, true)
+				if extra_path.size() < 2 or extra_path[0].distance_to(extra_from) > 30.0:
+					failed.append("arena coverage: arena %d spawn %s cannot reach the player" % [extra_index + 1, extra_sp.name])
+		# Rotation is deterministic and wraps through all seven arenas.
+		var last_index: int = main.ARENA_SCENES.size() - 1
 		main._advance_arena()
-		if main._arena_index == 3:
-			failed.append("arena coverage: rotation did not leave the last arena")
+		if main._arena_index != 0:
+			failed.append("arena coverage: rotation did not wrap from arena 7 to arena 1")
+
+	# -- Expanded roster: five enemies and three bosses are registered ----------
+	for roster_path: String in [
+			"res://scenes/enemy_sniper.tscn", "res://scenes/enemy_pulsar.tscn",
+			"res://scenes/enemy_medic.tscn", "res://scenes/enemy_skirmisher.tscn",
+			"res://scenes/enemy_rammer.tscn", "res://scenes/enemy_boss_tempest.tscn",
+			"res://scenes/enemy_boss_hive.tscn", "res://scenes/enemy_boss_juggernaut.tscn"]:
+		if not ResourceLoader.exists(roster_path):
+			failed.append("roster: missing %s" % roster_path)
+	var tempest: Node = load("res://scenes/enemy_boss_tempest.tscn").instantiate()
+	tempest.position = Vector2(300, 0)
+	wm._enemy_container.add_child(tempest)
+	await main.get_tree().physics_frame
+	tempest._charging = true
+	tempest._charge_dir = Vector2.LEFT
+	var tempest_charge: Vector2 = tempest._desired_velocity()
+	if not tempest_charge.is_equal_approx(Vector2.LEFT * tempest.charge_speed):
+		failed.append("tempest: phase-three charge state was ignored by movement")
+	tempest.queue_free()
 
 	# -- The retro pass covers EVERY arena, not just the one it was designed on --
 	# arena.gd adds the art layer and tunes the backdrop at runtime, so an arena added or
@@ -2578,6 +2846,165 @@ func _run(main: Node) -> void:
 						% [retro_path.get_file(), str(retro_mat.get_shader_parameter("grid_alpha"))])
 		retro_arena.free()
 
+	# -- Weapons: archetypes are BASE loadouts, not compounding modifiers --------
+	# A weapon writes the pristine SCENE stats and the shop then mutates the live
+	# values on top. The failure this guards is silent: a weapon scaled off its own
+	# output doubles on every run start (or every click of the picker), and the
+	# boss-TTK measurement drifts with it without anything erroring.
+	var wp: Player = load("res://scenes/player.tscn").instantiate() as Player
+	main.add_child(wp)
+	# The reference numbers come from a SECOND, untouched instance -- never from the
+	# player under test (a probe must not derive its expectation from the value it is
+	# about to modify).
+	var wp_ref: Player = load("res://scenes/player.tscn").instantiate() as Player
+	main.add_child(wp_ref)
+	await main.get_tree().process_frame
+	var wp_pristine: Dictionary = _player_stat_snapshot(wp_ref)
+	# Registry hygiene: unique ids, every key present, and no row that fires nothing.
+	var wp_seen: Array[String] = []
+	for wp_row: Dictionary in Weapons.DEFS:
+		var wp_id: String = String(wp_row.get("id", ""))
+		if wp_id == "" or wp_seen.has(wp_id):
+			failed.append("weapons: registry id '%s' is empty or duplicated" % wp_id)
+		wp_seen.append(wp_id)
+		for wp_key: String in ["name", "hint", "fire_rate", "damage", "speed", "recoil",
+				"pellets", "spread_deg", "pierce", "lifetime", "scale", "knockback"]:
+			if not wp_row.has(wp_key):
+				failed.append("weapons: row '%s' has no '%s'" % [wp_id, wp_key])
+		if int(wp_row.get("pellets", 0)) < 1 or float(wp_row.get("lifetime", 0.0)) <= 0.0 \
+				or float(wp_row.get("scale", 0.0)) <= 0.0:
+			failed.append("weapons: row '%s' would fire nothing (pellets/lifetime/scale)" % wp_id)
+	if Weapons.ids().size() != Weapons.DEFS.size():
+		failed.append("weapons: ids() and DEFS disagree (%d vs %d)" % [Weapons.ids().size(), Weapons.DEFS.size()])
+	if Weapons.ids().size() < 7:
+		failed.append("weapons: expected the default plus six archetypes, found %d" % Weapons.ids().size())
+	# A save edited by hand, or a row deleted in a later version, must fall back to the
+	# default gun -- never to an unarmed player.
+	if String(Weapons.resolve("not_a_weapon").id) != Weapons.DEFAULT_ID:
+		failed.append("weapons: an unknown id does not fall back to the default row")
+	# The DEFAULT row is a NO-OP. This is the assertion that keeps the boss-TTK probe's
+	# measured dps honest, so it is checked against real scene stats, not assumed.
+	wp.apply_weapon(Weapons.DEFAULT_ID)
+	if _player_stat_snapshot(wp) != wp_pristine:
+		failed.append("weapons: the default row is not a no-op (it moved the scene stats)")
+	# Every archetype moves exactly what its row names.
+	for wt_id: String in Weapons.ids():
+		var wt_row: Dictionary = Weapons.definition(wt_id)
+		wp.apply_weapon(wt_id)
+		if wp.bullets_per_shot != int(wt_row.pellets):
+			failed.append("weapons: '%s' fires %d pellets, not the row's %d"
+					% [wt_id, wp.bullets_per_shot, int(wt_row.pellets)])
+		if absf(wp.bullet_spread_deg - float(wt_row.spread_deg)) > 0.001:
+			failed.append("weapons: '%s' spread is %.1f deg, not the row's %.1f"
+					% [wt_id, wp.bullet_spread_deg, float(wt_row.spread_deg)])
+		if wp.pierce_count != int(wt_row.pierce):
+			failed.append("weapons: '%s' base pierce is %d, not the row's %d"
+					% [wt_id, wp.pierce_count, int(wt_row.pierce)])
+		var wt_want_damage: int = maxi(1, int(round(float(wp_pristine["bullet_damage"]) * float(wt_row.damage))))
+		if wp.bullet_damage != wt_want_damage:
+			failed.append("weapons: '%s' hits for %d, not the row's %d (scene %d)"
+					% [wt_id, wp.bullet_damage, wt_want_damage, int(wp_pristine["bullet_damage"])])
+		if absf(wp.fire_rate - float(wp_pristine["fire_rate"]) * float(wt_row.fire_rate)) > 0.0001:
+			failed.append("weapons: '%s' interval is %.3f, not scene x row" % [wt_id, wp.fire_rate])
+		if wt_id != Weapons.DEFAULT_ID and _player_stat_snapshot(wp) == wp_pristine:
+			failed.append("weapons: '%s' changes nothing (a gun nobody can feel)" % wt_id)
+	# Idempotent, the way a run start repeated on every scene load demands: applying
+	# the same weapon twice, and switching guns and back, must land on the same stats.
+	wp.apply_weapon("lance")
+	var wp_lance: Dictionary = _player_stat_snapshot(wp)
+	wp.apply_weapon("lance")
+	if _player_stat_snapshot(wp) != wp_lance:
+		failed.append("weapons: applying the same weapon twice compounds its stats")
+	wp.apply_weapon("needler")
+	wp.apply_weapon(Weapons.DEFAULT_ID)
+	if _player_stat_snapshot(wp) != wp_pristine:
+		failed.append("weapons: switching weapons and back does not restore the scene stats")
+	# The weapon's range, size, pierce and push have to reach the FIRED ROUND, not just
+	# sit on the player -- the same rule the shop's pierce probe follows.
+	wp.apply_weapon("lance")
+	wp._aim_pivot.rotation = 0.0
+	var wp_lance_row: Dictionary = Weapons.definition("lance")
+	var wp_before_ids: Array[int] = []
+	for wp_b: Bullet in BulletPool._all:
+		if wp_b.is_active:
+			wp_before_ids.append(wp_b.get_instance_id())
+	wp._fire_bullet()
+	var wp_round: Bullet = null
+	for wp_b2: Bullet in BulletPool._all:
+		if wp_b2.is_active and not wp_before_ids.has(wp_b2.get_instance_id()):
+			wp_round = wp_b2
+	if wp_round == null:
+		failed.append("weapons: the lance probe fired nothing")
+	else:
+		if wp_round.pierce_left != int(wp_lance_row.pierce):
+			failed.append("weapons: the lance round holds %d pierces, not the row's %d"
+					% [wp_round.pierce_left, int(wp_lance_row.pierce)])
+		if absf(wp_round.lifetime - float(wp_lance_row.lifetime)) > 0.001:
+			failed.append("weapons: the round flies %.2f s, not the row's %.2f"
+					% [wp_round.lifetime, float(wp_lance_row.lifetime)])
+		if absf(wp_round.scale.x - float(wp_lance_row.scale)) > 0.01:
+			failed.append("weapons: the round is %.2fx, not the row's %.2fx"
+					% [wp_round.scale.x, float(wp_lance_row.scale)])
+		if absf(wp_round.knockback_force - BulletPool.base_knockback * float(wp_lance_row.knockback)) > 0.01:
+			failed.append("weapons: the round pushes %.0f, not the row's push"
+					% wp_round.knockback_force)
+	# ...and the SHARED pool must not carry one gun's range into the enemy's rounds:
+	# a parked round is the next shooter's round, so the park owns the reset.
+	for wp_b3: Bullet in BulletPool._all:
+		wp_b3.deactivate()
+	var wp_hostile: Bullet = BulletPool.fire(Vector2.ZERO, Vector2.RIGHT, 5, 300.0, true)
+	if absf(wp_hostile.lifetime - Bullet.BASE_LIFETIME) > 0.001 or not wp_hostile.scale.is_equal_approx(Vector2.ONE):
+		failed.append("weapons: a hostile round inherited the player's range/size (lifetime %.2f, scale %s)"
+				% [wp_hostile.lifetime, str(wp_hostile.scale)])
+	BulletPool.reset()
+	# The shop still stacks on top of the weapon, and the weapon's own base is what it
+	# stacks on -- buying "damage" after picking a gun must not be cancelled by the gun.
+	wp.apply_weapon("viper")
+	var wp_viper_damage: int = wp.bullet_damage
+	var wp_up: Node = load("res://scripts/upgrade_system.gd").new()
+	main.add_child(wp_up)
+	wp_up.buy("damage", 99999, wp)
+	if wp.bullet_damage <= wp_viper_damage:
+		failed.append("weapons: a shop row stopped moving damage once a weapon was applied")
+	wp.apply_weapon("viper")
+	if wp.bullet_damage != wp_viper_damage:
+		failed.append("weapons: re-applying the weapon did not restore its own base damage")
+	wp_up.queue_free()
+	# The menu picker: one entry per registry row, writing the save and reaching the
+	# player through Main. It lives INSIDE the mutators row on purpose -- a new row
+	# costs the title card ~40 px it does not have at 720p.
+	var wp_menu: CanvasLayer = main.get_node("UI/MainMenu")
+	var wp_picker: OptionButton = wp_menu._weapon_picker
+	if wp_picker == null:
+		failed.append("weapons: the menu has no weapon picker")
+	else:
+		if wp_picker.item_count != Weapons.ids().size():
+			failed.append("weapons: the picker offers %d guns, the registry has %d"
+					% [wp_picker.item_count, Weapons.ids().size()])
+		if wp_picker.get_parent() != wp_menu.get_node("Center/Card/Margin/Column/Mutators"):
+			failed.append("weapons: the picker left the mutators row (it costs the card height there)")
+		var wp_menu_saved: Dictionary = Storage.read_all()
+		wp_menu._on_weapon_selected(3)
+		var wp_pick_id: String = String(Weapons.ids()[3])
+		if String(Storage.get_value(Weapons.SAVE_KEY, "")) != wp_pick_id:
+			failed.append("weapons: the picker never wrote its choice to the save file")
+		main._on_weapon_changed(wp_pick_id)
+		if main._weapon != wp_pick_id or main._player.weapon_id != wp_pick_id:
+			failed.append("weapons: a picker change never reached the player (main %s, player %s)"
+					% [main._weapon, main._player.weapon_id])
+		# Reflecting a saved value must not re-write the file: select() is silent by
+		# design, and this is what stops a launch from rewriting the save.
+		Storage.write_all(wp_menu_saved)
+		wp_menu.set_weapon(Weapons.DEFAULT_ID)
+		main._on_weapon_changed(Weapons.DEFAULT_ID)
+		if String(Storage.get_value(Weapons.SAVE_KEY, "")) != String(wp_menu_saved.get(Weapons.SAVE_KEY, "")):
+			failed.append("weapons: reflecting the saved gun rewrote the save file")
+		# Leave the live player on the default gun: later probes (and the next run)
+		# must not inherit this section's pick.
+		main._on_weapon_changed(Weapons.DEFAULT_ID)
+	wp_ref.free()
+	wp.free()
+
 	# -- Summary ---------------------------------------------------------------
 	_restore_save(save_had_file, save_snapshot)
 	# The caches have to follow the RESTORED file, not the flags the probes set.
@@ -2589,7 +3016,10 @@ func _run(main: Node) -> void:
 		print("SELFTEST FAIL (%d):" % failed.size())
 		for f in failed:
 			print("  - " + f)
-	main.get_tree().quit(0 if failed.is_empty() else 1)
+	var exit_code := 0 if failed.is_empty() else 1
+	var main_tree := main.get_tree()
+	main_tree.process_frame.connect(main_tree.quit.bind(exit_code), CONNECT_ONE_SHOT)
+	queue_free()
 
 
 ## Test-only: hand the unlockables a flag set instantly. is_unlocked() is cached

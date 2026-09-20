@@ -1,0 +1,15 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/enemy_sniper.gd" id="1"]
+[ext_resource type="PackedScene" path="res://scenes/enemy_base.tscn" id="2"]
+
+[node name="Enemy" instance=ExtResource("2")]
+script = ExtResource("1")
+max_health = 52
+contact_damage = 7
+move_speed = 92.0
+score_value = 22
+
+[node name="Body" parent="." index="0"]
+color = Color(0.9, 0.25, 0.8, 1)
+polygon = PackedVector2Array(18, 0, 5, -7, 0, -18, -5, -7, -18, 0, -5, 7, 0, 18, 5, 7)

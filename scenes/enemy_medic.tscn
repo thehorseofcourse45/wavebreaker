@@ -1,0 +1,15 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/enemy_medic.gd" id="1"]
+[ext_resource type="PackedScene" path="res://scenes/enemy_base.tscn" id="2"]
+
+[node name="Enemy" instance=ExtResource("2")]
+script = ExtResource("1")
+max_health = 86
+contact_damage = 5
+move_speed = 105.0
+score_value = 28
+
+[node name="Body" parent="." index="0"]
+color = Color(0.25, 1, 0.55, 1)
+polygon = PackedVector2Array(6, -18, 6, -6, 18, -6, 18, 6, 6, 6, 6, 18, -6, 18, -6, 6, -18, 6, -18, -6, -6, -6, -6, -18)

@@ -24,7 +24,10 @@ var hostile: bool = false
 @export_group("Projectile")
 @export var damage: int = 12
 @export var speed: float = 700.0
-@export var lifetime: float = 2.0
+## Range, in seconds of flight. A weapon archetype overrides this per shot (a
+## flamethrower is a 0.3 s round), so it is the DEFAULT, not a constant.
+const BASE_LIFETIME := 2.0
+@export var lifetime: float = BASE_LIFETIME
 @export var knockback_force: float = 120.0
 
 var direction: Vector2 = Vector2.RIGHT
@@ -140,14 +143,14 @@ func _handle_hit(body: Node2D) -> void:
 		# first body and not the second. The number that pops is what landed.
 		var crit: bool = crit_chance > 0.0 and randf() < crit_chance
 		var dealt: int = int(round(float(damage) * (crit_multiplier if crit else 1.0)))
-		BulletPool.damage_dealt += dealt   # the STATS tab's DPS column
 		if crit:
 			BulletPool.crit_landed.emit()   # lifetime counter, not per-run bookkeeping
 		# The number carries the enemy's own colour, so a kill reads as WHICH
 		# enemy was hit, not just how hard.
 		var tint: Color = (body as EnemyBase).death_burst_color if body is EnemyBase else Color(0.0, 0.0, 0.0, 0.0)
 		DamageNumbers.spawn(body.global_position, dealt, crit, tint)
-		body.take_damage(dealt, direction * knockback_force)
+		var applied: int = int(body.take_damage(dealt, direction * knockback_force))
+		BulletPool.damage_dealt += applied   # actual HP removed, not blocked/overkill damage
 		if pierce_left > 0:
 			pierce_left -= 1
 			return   # keep flying: shop "pierce" rounds pass through N enemies
@@ -164,6 +167,10 @@ func deactivate() -> void:
 	is_active = false
 	visible = false
 	_hit_ids.clear()   # the next flight starts with a clean pierce history
+	# Range and size are PER SHOT (see BulletPool.fire), so they must not survive a
+	# flight: the pool is shared with the enemies, whose rounds pass neither.
+	lifetime = BASE_LIFETIME
+	scale = Vector2.ONE
 	set_deferred("monitoring", false)
 	set_physics_process(false)
 	deactivated.emit(self)
@@ -175,6 +182,8 @@ func _deactivate_immediate() -> void:
 	hostile = false
 	visible = false
 	_hit_ids.clear()
+	lifetime = BASE_LIFETIME
+	scale = Vector2.ONE
 	set_deferred("monitoring", false)
 	set_physics_process(false)
 	position = Vector2.ZERO

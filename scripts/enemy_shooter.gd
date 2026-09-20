@@ -25,15 +25,17 @@ func _update_behavior(delta: float) -> void:
 
 
 func _desired_velocity() -> Vector2:
-	var to_player: Vector2 = _player_position() - global_position
-	var dist: float = to_player.length()
+	var dist: float = _player_position().distance_to(global_position)
 	if dist < 1.0:
 		return Vector2.ZERO
+	# Back off / creep along the nav path: a straight-line retreat would push the
+	# shooter through walls in the obstacle-heavy arenas.
+	var fwd: Vector2 = _dir_toward_player()
 	if dist < flee_range:
-		return -to_player.normalized() * move_speed            # back off
+		return -fwd * move_speed                          # back off
 	if dist > keep_distance:
-		return to_player.normalized() * move_speed * creep_speed_scale
-	return Vector2.ZERO                                        # hold the ring
+		return fwd * move_speed * creep_speed_scale       # creep in
+	return Vector2.ZERO                                   # hold the ring
 
 
 func _fire_at_player() -> void:

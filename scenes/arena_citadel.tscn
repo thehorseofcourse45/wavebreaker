@@ -1,0 +1,263 @@
+[gd_scene load_steps=14 format=3]
+
+[ext_resource type="NavigationPolygon" path="res://scenes/arena_citadel_navpoly.tres" id="NavPoly_arena"]
+
+[ext_resource type="PackedScene" path="res://scenes/player.tscn" id="1"]
+[ext_resource type="Script" path="res://scripts/arena.gd" id="2"]
+[ext_resource type="Shader" path="res://shaders/arena_backdrop.gdshader" id="3"]
+
+
+
+[sub_resource type="RectangleShape2D" id="Rect_wall_h"]
+size = Vector2(1640, 20)
+
+[sub_resource type="RectangleShape2D" id="Rect_wall_v"]
+size = Vector2(20, 1220)
+
+[sub_resource type="RectangleShape2D" id="Rect_obstacle_bar"]
+size = Vector2(300, 28)
+
+[sub_resource type="RectangleShape2D" id="Rect_obstacle_bar_v"]
+size = Vector2(28, 300)
+
+[sub_resource type="RectangleShape2D" id="Rect_obstacle_block"]
+size = Vector2(160, 160)
+
+[sub_resource type="ShaderMaterial" id="Mat_backdrop"]
+shader = ExtResource("3")
+shader_parameter/size = Vector2(3200, 2200)
+shader_parameter/base_color = Color(0.1, 0.06, 0.14, 1)
+shader_parameter/grid_color = Color(0.75, 0.45, 0.95, 1)
+
+[node name="ArenaRoot" type="Node2D"]
+script = ExtResource("2")
+
+[node name="NavRegion" type="NavigationRegion2D" parent="."]
+navigation_polygon = ExtResource("NavPoly_arena")
+
+[node name="Backdrop" type="ColorRect" parent="."]
+z_index = -5
+offset_left = -1600.0
+offset_top = -1100.0
+offset_right = 1600.0
+offset_bottom = 1100.0
+material = SubResource("Mat_backdrop")
+
+[node name="Floor" type="ColorRect" parent="."]
+z_index = -4
+offset_left = -1600.0
+offset_top = -1100.0
+offset_right = 1600.0
+offset_bottom = 1100.0
+color = Color(0.09, 0.06, 0.13, 0.72)
+
+[node name="WallNorth" type="StaticBody2D" parent="."]
+position = Vector2(0, -610)
+collision_layer = 8
+collision_mask = 0
+
+[node name="WallShape" type="CollisionShape2D" parent="WallNorth"]
+shape = SubResource("Rect_wall_h")
+
+[node name="WallVisual" type="ColorRect" parent="WallNorth"]
+offset_left = -820.0
+offset_top = -10.0
+offset_right = 820.0
+offset_bottom = 10.0
+color = Color(0.34, 0.24, 0.46, 1)
+
+[node name="WallSouth" type="StaticBody2D" parent="."]
+position = Vector2(0, 610)
+collision_layer = 8
+collision_mask = 0
+
+[node name="WallShape" type="CollisionShape2D" parent="WallSouth"]
+shape = SubResource("Rect_wall_h")
+
+[node name="WallVisual" type="ColorRect" parent="WallSouth"]
+offset_left = -820.0
+offset_top = -10.0
+offset_right = 820.0
+offset_bottom = 10.0
+color = Color(0.34, 0.24, 0.46, 1)
+
+[node name="WallWest" type="StaticBody2D" parent="."]
+position = Vector2(-810, 0)
+collision_layer = 8
+collision_mask = 0
+
+[node name="WallShape" type="CollisionShape2D" parent="WallWest"]
+shape = SubResource("Rect_wall_v")
+
+[node name="WallVisual" type="ColorRect" parent="WallWest"]
+offset_left = -10.0
+offset_top = -610.0
+offset_right = 10.0
+offset_bottom = 610.0
+color = Color(0.34, 0.24, 0.46, 1)
+
+[node name="WallEast" type="StaticBody2D" parent="."]
+position = Vector2(810, 0)
+collision_layer = 8
+collision_mask = 0
+
+[node name="WallShape" type="CollisionShape2D" parent="WallEast"]
+shape = SubResource("Rect_wall_v")
+
+[node name="WallVisual" type="ColorRect" parent="WallEast"]
+offset_left = -10.0
+offset_top = -610.0
+offset_right = 10.0
+offset_bottom = 610.0
+color = Color(0.34, 0.24, 0.46, 1)
+
+[node name="BunkerNW" type="StaticBody2D" parent="."]
+position = Vector2(-520, -380)
+collision_layer = 8
+collision_mask = 0
+
+[node name="ShapeBunkerNW" type="CollisionShape2D" parent="BunkerNW"]
+shape = SubResource("Rect_obstacle_block")
+
+[node name="VisualBunkerNW" type="ColorRect" parent="BunkerNW"]
+offset_left = -80.0
+offset_top = -80.0
+offset_right = 80.0
+offset_bottom = 80.0
+color = Color(0.26, 0.18, 0.36, 1)
+
+[node name="BunkerNE" type="StaticBody2D" parent="."]
+position = Vector2(520, -380)
+collision_layer = 8
+collision_mask = 0
+
+[node name="ShapeBunkerNE" type="CollisionShape2D" parent="BunkerNE"]
+shape = SubResource("Rect_obstacle_block")
+
+[node name="VisualBunkerNE" type="ColorRect" parent="BunkerNE"]
+offset_left = -80.0
+offset_top = -80.0
+offset_right = 80.0
+offset_bottom = 80.0
+color = Color(0.26, 0.18, 0.36, 1)
+
+[node name="BunkerSW" type="StaticBody2D" parent="."]
+position = Vector2(-520, 380)
+collision_layer = 8
+collision_mask = 0
+
+[node name="ShapeBunkerSW" type="CollisionShape2D" parent="BunkerSW"]
+shape = SubResource("Rect_obstacle_block")
+
+[node name="VisualBunkerSW" type="ColorRect" parent="BunkerSW"]
+offset_left = -80.0
+offset_top = -80.0
+offset_right = 80.0
+offset_bottom = 80.0
+color = Color(0.26, 0.18, 0.36, 1)
+
+[node name="BunkerSE" type="StaticBody2D" parent="."]
+position = Vector2(520, 380)
+collision_layer = 8
+collision_mask = 0
+
+[node name="ShapeBunkerSE" type="CollisionShape2D" parent="BunkerSE"]
+shape = SubResource("Rect_obstacle_block")
+
+[node name="VisualBunkerSE" type="ColorRect" parent="BunkerSE"]
+offset_left = -80.0
+offset_top = -80.0
+offset_right = 80.0
+offset_bottom = 80.0
+color = Color(0.26, 0.18, 0.36, 1)
+
+[node name="RingN" type="StaticBody2D" parent="."]
+position = Vector2(0, -300)
+collision_layer = 8
+collision_mask = 0
+
+[node name="ShapeRingN" type="CollisionShape2D" parent="RingN"]
+shape = SubResource("Rect_obstacle_bar")
+
+[node name="VisualRingN" type="ColorRect" parent="RingN"]
+offset_left = -150.0
+offset_top = -14.0
+offset_right = 150.0
+offset_bottom = 14.0
+color = Color(0.2, 0.14, 0.28, 1)
+
+[node name="RingS" type="StaticBody2D" parent="."]
+position = Vector2(0, 300)
+collision_layer = 8
+collision_mask = 0
+
+[node name="ShapeRingS" type="CollisionShape2D" parent="RingS"]
+shape = SubResource("Rect_obstacle_bar")
+
+[node name="VisualRingS" type="ColorRect" parent="RingS"]
+offset_left = -150.0
+offset_top = -14.0
+offset_right = 150.0
+offset_bottom = 14.0
+color = Color(0.2, 0.14, 0.28, 1)
+
+[node name="RingW" type="StaticBody2D" parent="."]
+position = Vector2(-300, 0)
+collision_layer = 8
+collision_mask = 0
+
+[node name="ShapeRingW" type="CollisionShape2D" parent="RingW"]
+shape = SubResource("Rect_obstacle_bar_v")
+
+[node name="VisualRingW" type="ColorRect" parent="RingW"]
+offset_left = -14.0
+offset_top = -150.0
+offset_right = 14.0
+offset_bottom = 150.0
+color = Color(0.2, 0.14, 0.28, 1)
+
+[node name="RingE" type="StaticBody2D" parent="."]
+position = Vector2(300, 0)
+collision_layer = 8
+collision_mask = 0
+
+[node name="ShapeRingE" type="CollisionShape2D" parent="RingE"]
+shape = SubResource("Rect_obstacle_bar_v")
+
+[node name="VisualRingE" type="ColorRect" parent="RingE"]
+offset_left = -14.0
+offset_top = -150.0
+offset_right = 14.0
+offset_bottom = 150.0
+color = Color(0.2, 0.14, 0.28, 1)
+
+[node name="Spawn1" type="Marker2D" parent="." groups=["spawn_points"]]
+position = Vector2(-700, -520)
+
+[node name="Spawn2" type="Marker2D" parent="." groups=["spawn_points"]]
+position = Vector2(700, -520)
+
+[node name="Spawn3" type="Marker2D" parent="." groups=["spawn_points"]]
+position = Vector2(-700, 520)
+
+[node name="Spawn4" type="Marker2D" parent="." groups=["spawn_points"]]
+position = Vector2(700, 520)
+
+[node name="Spawn5" type="Marker2D" parent="." groups=["spawn_points"]]
+position = Vector2(0, -520)
+
+[node name="Spawn6" type="Marker2D" parent="." groups=["spawn_points"]]
+position = Vector2(0, 520)
+
+[node name="Spawn7" type="Marker2D" parent="." groups=["spawn_points"]]
+position = Vector2(-700, 0)
+
+[node name="Spawn8" type="Marker2D" parent="." groups=["spawn_points"]]
+position = Vector2(700, 0)
+
+[node name="Player" parent="." instance=ExtResource("1")]
+
+[node name="EnemyContainer" type="Node2D" parent="." groups=["enemy_container"]]
+
+[node name="EffectsLayer" type="Node2D" parent="." groups=["effects_layer"]]
+z_index = 20

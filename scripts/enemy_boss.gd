@@ -22,7 +22,6 @@ class_name EnemyBoss
 ## Phase 3 -- charge: locked-direction dashes with a rest between them, on top
 ## of the phase-2 ring.
 
-signal split_spawned(pair: Array)
 signal boss_phase_changed(phase: int, color: Color, at: Vector2)
 
 @export_group("Bullet hell")
@@ -73,7 +72,8 @@ func _ready() -> void:
 	super._ready()
 	add_to_group("bosses")    # Main counts boss kills for the unlockables
 	collision_mask = 3        # Player (1) + Enemy (2); no Wall (8) -> walks through cover
-	_nav_fallback = true      # straight-line pursuit, no navmesh
+	_nav_disabled = true      # straight-line pursuit, no navmesh (never falls back)
+	_nav_fallback = true
 	_minion_timer = minion_interval
 
 

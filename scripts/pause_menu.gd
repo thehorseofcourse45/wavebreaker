@@ -100,6 +100,7 @@ func _build_stats() -> void:
 	# One line per difficulty, in the registry order the menu uses.
 	for id: String in WaveManager.DIFFICULTY_ORDER:
 		_stats_values["difficulty_" + id] = _add_stats_line(_stats_page, id.to_upper())
+	_tabs.add_child(_stats_page)
 
 
 ## Name on the left, value on the right. Returns the value Label, which is the
@@ -125,11 +126,7 @@ func refresh_stats(run: Dictionary = {}) -> void:
 	if _stats_page == null:
 		return
 	var wanted: bool = Unlockables.is_unlocked("run_stats")
-	var present: bool = _stats_page.get_parent() == _tabs
-	if wanted and not present:
-		_tabs.add_child(_stats_page)
-	elif not wanted and present:
-		_tabs.remove_child(_stats_page)
+	_tabs.set_tab_hidden(_stats_page.get_index(), not wanted)
 	if not wanted:
 		return
 	var data: Dictionary = Storage.read_all()

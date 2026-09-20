@@ -9,12 +9,18 @@ radius = 64.0
 [node name="Enemy" instance=ExtResource("2")]
 collision_mask = 3
 script = ExtResource("1")
-max_health = 3750
-contact_damage = 20
-move_speed = 72.0
-steering_accel = 240.0
-score_value = 250
+max_health = 5500
+contact_damage = 30
+move_speed = 92.0
+steering_accel = 320.0
+score_value = 400
 knockback_resist = 0.85
+bullet_damage = 12
+ring_bullets = 14
+ring_interval = 1.25
+burst_ring_bullets = 30
+spiral_bullets = 4
+charge_speed = 620.0
 
 [node name="Body" parent="." index="0"]
 color = Color(0.55, 0.15, 0.45, 1)

@@ -26,10 +26,10 @@ func _update_behavior(delta: float) -> void:
 		_apply_tint()
 
 
-func take_damage(amount: int, knockback: Vector2 = Vector2.ZERO) -> void:
+func take_damage(amount: int, knockback: Vector2 = Vector2.ZERO) -> int:
 	if _shielded:
-		return  # bullet still deactivates on contact; no damage is dealt
-	super.take_damage(amount, knockback)
+		return 0  # bullet still deactivates on contact; no damage is dealt
+	return super.take_damage(amount, knockback)
 
 
 func _apply_tint() -> void:

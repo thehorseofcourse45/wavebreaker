@@ -49,8 +49,12 @@ func _ready() -> void:
 
 ## `pierce` = extra enemies the round passes through (player rounds only).
 ## `knockback_scale` multiplies this shot's push (the charge shot uses it).
+## `lifetime` / `scale` are 0 -> keep the bullet's own parked defaults
+## (Bullet.BASE_LIFETIME / 1.0), so a caller that cares about neither is unaffected.
+## Weapons pass both; the charge shot passes scale only, to keep its own range.
 func fire(start_position: Vector2, fire_direction: Vector2, new_damage: int, new_speed: float,
-		is_hostile: bool = false, pierce: int = 0, knockback_scale: float = 1.0) -> Bullet:
+		is_hostile: bool = false, pierce: int = 0, knockback_scale: float = 1.0,
+		lifetime: float = 0.0, scale: float = 0.0) -> Bullet:
 	var bullet: Bullet = _take_free_bullet()
 	bullet.hostile = is_hostile
 	bullet.knockback_force = base_knockback * knockback_scale
@@ -61,6 +65,10 @@ func fire(start_position: Vector2, fire_direction: Vector2, new_damage: int, new
 		bullet.pierce_left = maxi(0, pierce)
 		bullet.crit_chance = crit_chance
 	bullet.crit_multiplier = crit_multiplier
+	if lifetime > 0.0:
+		bullet.lifetime = lifetime
+	if scale > 0.0:
+		bullet.scale = Vector2.ONE * scale
 	bullet.fire(start_position, fire_direction, new_damage, new_speed)
 	return bullet
 

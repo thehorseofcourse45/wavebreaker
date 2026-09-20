@@ -301,4 +301,5 @@ func _play_music(stream: AudioStream) -> void:
 
 
 func stop_music() -> void:
-	_music_player.playing = false
+	_music_player.stop()
+	_music_player.stream = null

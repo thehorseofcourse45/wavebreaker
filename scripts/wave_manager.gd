@@ -17,12 +17,12 @@ signal game_over
 
 @export_group("Waves (data-driven)")
 @export var wave_table: Array[Dictionary] = [
-	{"chaser": 4, "rusher": 0, "tank": 0, "weaver": 0, "orbiter": 0, "shooter": 0, "splitter": 0, "elite": 0, "leaper": 0, "bulwark": 0, "hp_mult": 1.0, "speed_mult": 1.0},
-	{"chaser": 5, "rusher": 3, "tank": 0, "weaver": 2, "orbiter": 0, "shooter": 0, "splitter": 0, "elite": 0, "leaper": 2, "bulwark": 0, "hp_mult": 1.05, "speed_mult": 1.0},
-	{"chaser": 6, "rusher": 4, "tank": 1, "weaver": 2, "orbiter": 1, "shooter": 1, "splitter": 0, "elite": 0, "leaper": 2, "bulwark": 1, "hp_mult": 1.1, "speed_mult": 1.02},
-	{"chaser": 6, "rusher": 6, "tank": 2, "weaver": 3, "orbiter": 2, "shooter": 1, "splitter": 1, "elite": 0, "leaper": 3, "bulwark": 1, "hp_mult": 1.2, "speed_mult": 1.05},
-	{"chaser": 8, "rusher": 8, "tank": 3, "weaver": 4, "orbiter": 3, "shooter": 2, "splitter": 2, "elite": 0, "leaper": 3, "bulwark": 2, "hp_mult": 1.3, "speed_mult": 1.08},
-	{"chaser": 10, "rusher": 10, "tank": 4, "weaver": 5, "orbiter": 4, "shooter": 3, "splitter": 2, "elite": 1, "leaper": 4, "bulwark": 2, "hp_mult": 1.45, "speed_mult": 1.1},
+	{"chaser": 4, "rusher": 0, "tank": 0, "weaver": 0, "orbiter": 0, "shooter": 0, "splitter": 0, "elite": 0, "leaper": 0, "bulwark": 0, "sniper": 0, "pulsar": 0, "medic": 0, "skirmisher": 0, "rammer": 0, "hp_mult": 1.0, "speed_mult": 1.0},
+	{"chaser": 5, "rusher": 3, "tank": 0, "weaver": 2, "orbiter": 0, "shooter": 0, "splitter": 0, "elite": 0, "leaper": 2, "bulwark": 0, "sniper": 1, "pulsar": 0, "medic": 0, "skirmisher": 0, "rammer": 0, "hp_mult": 1.05, "speed_mult": 1.0},
+	{"chaser": 6, "rusher": 4, "tank": 1, "weaver": 2, "orbiter": 1, "shooter": 1, "splitter": 0, "elite": 0, "leaper": 2, "bulwark": 1, "sniper": 1, "pulsar": 1, "medic": 0, "skirmisher": 0, "rammer": 0, "hp_mult": 1.1, "speed_mult": 1.02},
+	{"chaser": 6, "rusher": 6, "tank": 2, "weaver": 3, "orbiter": 2, "shooter": 1, "splitter": 1, "elite": 0, "leaper": 3, "bulwark": 1, "sniper": 1, "pulsar": 1, "medic": 1, "skirmisher": 0, "rammer": 0, "hp_mult": 1.2, "speed_mult": 1.05},
+	{"chaser": 8, "rusher": 8, "tank": 3, "weaver": 4, "orbiter": 3, "shooter": 2, "splitter": 2, "elite": 0, "leaper": 3, "bulwark": 2, "sniper": 2, "pulsar": 1, "medic": 1, "skirmisher": 2, "rammer": 0, "hp_mult": 1.3, "speed_mult": 1.08},
+	{"chaser": 10, "rusher": 10, "tank": 4, "weaver": 5, "orbiter": 4, "shooter": 3, "splitter": 2, "elite": 1, "leaper": 4, "bulwark": 2, "sniper": 2, "pulsar": 2, "medic": 1, "skirmisher": 2, "rammer": 2, "hp_mult": 1.45, "speed_mult": 1.1},
 ]
 
 @export_group("Pacing")
@@ -54,12 +54,17 @@ signal game_over
 ## so the table itself is never mutated. `spawn` scales the spawn INTERVAL (lower
 ## = more pressure per second). Three knobs, one place, every wave routes here.
 const DIFFICULTIES: Dictionary = {
-	"easy": {"hp": 0.75, "speed": 0.92, "spawn": 1.3},
-	"normal": {"hp": 1.0, "speed": 1.0, "spawn": 1.0},
-	"hard": {"hp": 1.4, "speed": 1.08, "spawn": 0.75},
+	# Bumped ~1.5x over the original tuning to counter the shop's power curve:
+	# hp x1.5, spawn interval /1.5 (lower = more pressure per second), and a lighter
+	# x1.1 on speed -- a full x1.5 would put the fastest enemies past the player's
+	# base 230 px/s move speed. NIGHTMARE is bumped with the rest so the ladder
+	# stays ordered (it must always be harder than HARD).
+	"easy": {"hp": 1.13, "speed": 1.01, "spawn": 0.87},
+	"normal": {"hp": 1.5, "speed": 1.1, "spawn": 0.67},
+	"hard": {"hp": 2.1, "speed": 1.19, "spawn": 0.5},
 	# Unlockable "nightmare" (clear a Hard run): the fourth row appears in the menu
 	# only once it is earned -- `unlock` is what the menu filters on.
-	"nightmare": {"hp": 1.7, "speed": 1.15, "spawn": 0.65, "unlock": "nightmare"},
+	"nightmare": {"hp": 2.55, "speed": 1.27, "spawn": 0.43, "unlock": "nightmare"},
 }
 ## Menu order, so the UI never hardcodes the list.
 const DIFFICULTY_ORDER: Array[String] = ["easy", "normal", "hard", "nightmare"]
@@ -84,10 +89,21 @@ static func difficulty_unlocked(id: String) -> bool:
 ## Every Nth wave is a boss wave. The rule lives here so Main can ask instead of
 ## duplicating the modulo.
 const BOSS_EVERY := 10
-@export var boss_scene: PackedScene = preload("res://scenes/enemy_boss.tscn")
+@export var boss_scenes: Array[PackedScene] = [
+	preload("res://scenes/enemy_boss.tscn"),
+	preload("res://scenes/enemy_boss_tempest.tscn"),
+	preload("res://scenes/enemy_boss_hive.tscn"),
+	preload("res://scenes/enemy_boss_juggernaut.tscn"),
+]
 ## Bosses per boss wave, spawned together at wave start (see _start_wave).
 @export var boss_count: int = 2
 @export var boss_escort_chasers: int = 2
+
+
+## A finite run includes its first boss and one following arena wave, so the
+## campaign can exercise both boss combat and the arena transition it unlocks.
+func finite_wave_count() -> int:
+	return maxi(wave_table.size(), BOSS_EVERY + 1)
 
 @export_group("Deep arena")
 ## Applied to every wave once the run has moved to the deeper arena.
@@ -115,6 +131,11 @@ var force_affixes: bool = false
 @export var elite_scene: PackedScene = preload("res://scenes/enemy_elite.tscn")
 @export var bulwark_scene: PackedScene = preload("res://scenes/enemy_bulwark.tscn")
 @export var leaper_scene: PackedScene = preload("res://scenes/enemy_leaper.tscn")
+@export var sniper_scene: PackedScene = preload("res://scenes/enemy_sniper.tscn")
+@export var pulsar_scene: PackedScene = preload("res://scenes/enemy_pulsar.tscn")
+@export var medic_scene: PackedScene = preload("res://scenes/enemy_medic.tscn")
+@export var skirmisher_scene: PackedScene = preload("res://scenes/enemy_skirmisher.tscn")
+@export var rammer_scene: PackedScene = preload("res://scenes/enemy_rammer.tscn")
 
 var current_wave: int = 0
 var is_running: bool = false
@@ -211,7 +232,9 @@ func _start_wave(wave_number: int) -> void:
 	for spec: Array in [["chaser", "chaser"], ["rusher", "rusher"], ["tank", "tank"],
 			["weaver", "weaver"], ["orbiter", "orbiter"], ["shooter", "shooter"],
 			["splitter", "splitter"], ["elite", "elite"], ["boss", "boss"],
-			["bulwark", "bulwark"], ["leaper", "leaper"]]:
+			["bulwark", "bulwark"], ["leaper", "leaper"], ["sniper", "sniper"],
+			["pulsar", "pulsar"], ["medic", "medic"], ["skirmisher", "skirmisher"],
+			["rammer", "rammer"]]:
 		for i: int in int(comp.get(spec[0], 0)):
 			_spawn_queue.append(String(spec[1]))
 	_spawn_queue.shuffle()
@@ -280,7 +303,7 @@ func _composition_for_wave(wave_number: int) -> Dictionary:
 		# escort is trimmed to a handful of chasers so it never reads as a swarm.
 		var boss_comp: Dictionary = _base_composition(wave_number)
 		for key: String in ["rusher", "tank", "weaver", "orbiter", "shooter", "splitter",
-				"elite", "bulwark", "leaper"]:
+				"elite", "bulwark", "leaper", "sniper", "pulsar", "medic", "skirmisher", "rammer"]:
 			boss_comp[key] = 0
 		boss_comp["chaser"] = boss_escort_chasers
 		boss_comp["boss"] = boss_count_for_wave(wave_number)
@@ -307,6 +330,11 @@ func _base_composition(wave_number: int) -> Dictionary:
 		# One more bulwark only every 3 waves: an aura carrier needs presence,
 		# not count -- its mitigation does not stack with its own kind.
 		"bulwark": int(base.get("bulwark", 1)) + (extra / 3),
+		"sniper": 1 + (extra / 3),
+		"pulsar": 1 + (extra / 4),
+		"medic": 1 + (extra / 5),
+		"skirmisher": 1 + (extra / 3),
+		"rammer": 1 + (extra / 4),
 		"hp_mult": float(base.get("hp_mult", 1.4)) + extra * hp_growth_per_wave,
 		"speed_mult": minf(float(base.get("speed_mult", 1.1)) + extra * speed_growth_per_wave, max_speed_mult),
 	}
@@ -353,8 +381,19 @@ func _spawn_enemy(type_name: String) -> void:
 			scene = bulwark_scene
 		"leaper":
 			scene = leaper_scene
+		"sniper":
+			scene = sniper_scene
+		"pulsar":
+			scene = pulsar_scene
+		"medic":
+			scene = medic_scene
+		"skirmisher":
+			scene = skirmisher_scene
+		"rammer":
+			scene = rammer_scene
 		"boss":
-			scene = boss_scene
+			var boss_wave_index: int = maxi(floori(float(current_wave) / float(BOSS_EVERY)) - 1, 0)
+			scene = boss_scenes[boss_wave_index % boss_scenes.size()]
 	var enemy: EnemyBase = scene.instantiate() as EnemyBase
 	if enemy == null:
 		push_error("WaveManager: failed to instantiate enemy type '%s'." % type_name)
@@ -425,7 +464,7 @@ func _on_enemy_died(_enemy: EnemyBase) -> void:
 	_alive = maxi(_alive - 1, 0)
 	progress_changed.emit(enemies_remaining())
 	if is_running and _spawn_queue.is_empty() and _alive <= 0:
-		if not endless and current_wave >= wave_table.size():
+		if not endless and current_wave >= finite_wave_count():
 			# Finite campaign: the last authored wave ends the run. Announced as
 			# game_over (NOT wave_cleared) so the shop never opens behind it.
 			print("[Wave] WAVE %d -- the scripted run is complete (ENDLESS off)." % current_wave)

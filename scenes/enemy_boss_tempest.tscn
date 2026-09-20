@@ -1,0 +1,13 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/enemy_boss_tempest.gd" id="1"]
+[ext_resource type="PackedScene" path="res://scenes/enemy_boss.tscn" id="2"]
+
+[node name="Enemy" instance=ExtResource("2")]
+script = ExtResource("1")
+max_health = 4800
+move_speed = 125.0
+ring_bullets = 18
+spiral_bullets = 5
+body_color_full = Color(0.15, 0.45, 0.9, 1)
+body_color_hurt = Color(0.65, 0.2, 1, 1)

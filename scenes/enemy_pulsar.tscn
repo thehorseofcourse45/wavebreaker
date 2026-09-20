@@ -1,0 +1,16 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/enemy_pulsar.gd" id="1"]
+[ext_resource type="PackedScene" path="res://scenes/enemy_base.tscn" id="2"]
+
+[node name="Enemy" instance=ExtResource("2")]
+script = ExtResource("1")
+max_health = 68
+contact_damage = 9
+move_speed = 145.0
+score_value = 24
+orbit_radius = 230.0
+
+[node name="Body" parent="." index="0"]
+color = Color(0.2, 0.8, 1, 1)
+polygon = PackedVector2Array(18, 0, 9, 15.6, -9, 15.6, -18, 0, -9, -15.6, 9, -15.6)

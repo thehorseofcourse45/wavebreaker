@@ -15,10 +15,11 @@ func _update_behavior(delta: float) -> void:
 
 
 func _desired_velocity() -> Vector2:
-	var to_player: Vector2 = _player_position() - global_position
-	if to_player.length_squared() < 1.0:
+	var fwd: Vector2 = _dir_toward_player()
+	if fwd == Vector2.ZERO:
 		return Vector2.ZERO
-	var fwd: Vector2 = to_player.normalized()
+	# Sway perpendicular to the nav path, not to the raw bearing, so the weave
+	# stays inside the walkable corridor.
 	var side := Vector2(-fwd.y, fwd.x)
 	var dir: Vector2 = (fwd + side * sin(_phase) * sway_strength).normalized()
 	return dir * move_speed

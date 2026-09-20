@@ -25,18 +25,21 @@ const PICKUP_CREDITS := 5
 const PICKUP_HEALTH := 15
 var pickup_drop_chance: float = 0.18
 
-## Arena scenes, in run order. Wave BOSS_EVERY opens the next one; a third is an
-## entry here plus one baked scene.
+## Arena scenes, in run order. Wave BOSS_EVERY opens the next one; adding one is
+## an entry here plus one baked scene (+ an unlockable in ARENA_UNLOCKS if gated).
 const ARENA_SCENES: Array[String] = [
 	"res://scenes/arena.tscn",
 	"res://scenes/arena_deep.tscn",
 	"res://scenes/arena_vault.tscn",
 	"res://scenes/arena_nexus.tscn",
+	"res://scenes/arena_citadel.tscn",
+	"res://scenes/arena_rift.tscn",
+	"res://scenes/arena_foundry.tscn",
 ]
 ## Unlockable that has to be earned before Main may switch to that arena ("" =
 ## always available). The vault is the reward for reaching wave 20, so a player who
 ## gets there without it simply stays in the deep arena.
-const ARENA_UNLOCKS: Array[String] = ["", "", "vault_arena", ""]
+const ARENA_UNLOCKS: Array[String] = ["", "", "vault_arena", "", "", "", ""]
 ## Unlockable "second_wind": the one auto-revive per run, at this share of max HP.
 const SECOND_WIND_FRACTION := 0.30
 
@@ -72,6 +75,9 @@ var _boss_rush: bool = false
 var _fog: bool = false
 var _elite_storm: bool = false
 var _no_shop: bool = false
+## The run's weapon archetype (weapons.gd). The menu owns the preference, Main
+## only seeds it from disk and forwards it to the player at run start.
+var _weapon: String = "rifle"
 ## Earned by now, announced once the shop closes so the callout does not fight
 ## the "WAVE CLEARED" banner.
 var _fresh_unlocks: Array[String] = []
@@ -121,7 +127,9 @@ func _ready() -> void:
 	_wire_signals()
 	_enter_menu()
 	# Self-test hook (no-op unless NEON_TEST is passed on the cmdline).
-	load("res://scripts/_selftest.gd").new().attach_to(self)
+	var selftest: Node = load("res://scripts/_selftest.gd").new()
+	add_child(selftest)
+	selftest.attach_to(self)
 	_capture_screenshot()
 
 
@@ -171,9 +179,24 @@ func _capture_screenshot() -> void:
 			_switch_arena(2)
 			settle = 12.0
 		"nexus":
-			# Arena 4, for comparing the retro pass across all four arenas.
+			# Arena 4, for comparing the retro pass across all arenas.
 			start_game()
 			_switch_arena(3)
+			settle = 12.0
+		"citadel":
+			# Arena 5, for verifying the retro pass on the late-game arenas.
+			start_game()
+			_switch_arena(4)
+			settle = 12.0
+		"rift":
+			# Arena 6.
+			start_game()
+			_switch_arena(5)
+			settle = 12.0
+		"foundry":
+			# Arena 7.
+			start_game()
+			_switch_arena(6)
 			settle = 12.0
 		"showcase":
 			# New-archetype exhibit: dormant bulwarks and leapers at fixed offsets
@@ -347,6 +370,10 @@ func start_game() -> void:
 	_run_time = 0.0
 	_second_wind_used = false
 	BulletPool.damage_dealt = 0   # the STATS tab's DPS column is per run
+	# The weapon archetype is a BASE loadout, applied BEFORE the perks and the
+	# mutators below so both scale the weapon's own numbers instead of cancelling
+	# them (Perks reads _base_bullet_damage, which apply_weapon re-derives).
+	_player.apply_weapon(_weapon)
 	# Meta perks: read the save's perk levels, then scale the player from its
 	# pristine base stats (safe to call on every run start).
 	Perks.refresh()
@@ -401,6 +428,10 @@ func _enter_menu() -> void:
 	_fog = bool(Storage.get_value("fog", false))
 	_elite_storm = bool(Storage.get_value("elite_storm", false))
 	_no_shop = bool(Storage.get_value("no_shop", false))
+	# The weapon archetype is a preference too: seeded here so a scene reload, a
+	# return to the menu and a RESET SAVE all keep showing the picked gun.
+	_weapon = String(Weapons.resolve(String(Storage.get_value(Weapons.SAVE_KEY, Weapons.DEFAULT_ID))).id)
+	_player.apply_weapon(_weapon)
 	_waves.boss_rush = _boss_rush
 	_waves.force_affixes = _elite_storm
 	_player.controls_enabled = false
@@ -408,8 +439,9 @@ func _enter_menu() -> void:
 	_banner.visible = false
 	_game_over.visible = false
 	_menu.visible = true
-	_menu.set_scripted_waves(_waves.wave_table.size())
+	_menu.set_scripted_waves(_waves.finite_wave_count())
 	_menu.set_difficulty(_waves.difficulty)
+	_menu.set_weapon(_weapon)
 	_menu.refresh_run_options(_glass_cannon, _boss_rush, _fog, _elite_storm, _no_shop)
 	_menu.sync_audio_sliders()   # the pause menu moves the same volumes
 	_menu.refresh_stats()   # a record set this session shows up without a restart
@@ -439,6 +471,15 @@ func _on_mutators_changed(glass_cannon: bool, boss_rush: bool, fog: bool,
 	_no_shop = no_shop
 	_waves.boss_rush = boss_rush
 	_waves.force_affixes = elite_storm
+
+
+## The menu owns the weapon pick (it writes the save); Main re-applies it to the
+## player so a changed gun is live. Safe because the menu is only reachable in
+## MENU state -- start_game() applies it again before the shop can exist, so an
+## earlier purchase can never be silently rolled back mid-run.
+func _on_weapon_changed(id: String) -> void:
+	_weapon = String(Weapons.resolve(id).id)
+	_player.apply_weapon(_weapon)
 
 
 func _on_player_died() -> void:
@@ -562,6 +603,7 @@ func _wire_signals() -> void:
 	_menu.endless_toggled.connect(_on_endless_toggled)
 	_menu.difficulty_changed.connect(_on_difficulty_changed)
 	_menu.mutators_changed.connect(_on_mutators_changed)
+	_menu.weapon_changed.connect(_on_weapon_changed)
 	_game_over.restart_pressed.connect(_restart)
 	# Pause menu.
 	_pause_menu.resume_pressed.connect(_on_pause_resume)
@@ -702,7 +744,9 @@ func _on_wave_cleared(wave_number: int) -> void:
 	AudioManager.start_music()
 	if _upgrades == null or _waves == null:
 		return
-	# WaveManager already paused because shop_pause_enabled; open the shop.
+	# WaveManager already paused because shop_pause_enabled; deal a fresh hand for
+	# this wave and open the shop. REROLL re-deals a new hand on demand.
+	_shop.deal(_upgrades)
 	_shop.show_shop(_upgrades, _credits, _player)
 	# Lifetime progress is judged at wave boundaries, never per kill. The merged
 	# view (stored + this run) means an unlock can land mid-run; the callout waits
@@ -751,25 +795,14 @@ func _on_shop_resume() -> void:
 
 # ------------------------------------------------------------- arena swap ---
 
-## Arena progression. Each boss-wave boundary first tries the next arena in the
-## list (so arenas open in order and the gated vault still requires its
-## unlockable). Once the end is reached -- or the next one is gated out -- it
-## ROTATES: stepping to the next ungated arena, wrapping. Arena 1 is skipped in
-## the rotation (it is the start, not a destination). Chosen over a "force" flag
-## so a locked vault can never be reached by rotation alone.
+## Arena progression. Each full boss wave advances to the next available arena,
+## wrapping after arena 7. Locked arenas are skipped until earned.
 func _advance_arena() -> void:
-	if _arena_index + 1 < ARENA_SCENES.size():
-		var before: int = _arena_index
-		_switch_arena(_arena_index + 1)
-		if _arena_index != before:
-			return
-	for step: int in range(1, ARENA_SCENES.size()):
-		var next: int = (_arena_index + step) % ARENA_SCENES.size()
-		if next == 0:
-			continue
-		var gate: String = ARENA_UNLOCKS[next] if next < ARENA_UNLOCKS.size() else ""
-		if gate == "":
-			_switch_arena(next)
+	for offset: int in range(1, ARENA_SCENES.size() + 1):
+		var i: int = (_arena_index + offset) % ARENA_SCENES.size()
+		var gate: String = ARENA_UNLOCKS[i] if i < ARENA_UNLOCKS.size() else ""
+		if gate == "" or Unlockables.is_unlocked(gate):
+			_switch_arena(i)
 			return
 
 
@@ -778,7 +811,7 @@ func _advance_arena() -> void:
 ## signals wired in _wire_signals stay connected; everything else in the old
 ## arena -- enemies, obstacles, its nav region -- is freed with it.
 func _switch_arena(index: int) -> void:
-	if index <= 0 or index >= ARENA_SCENES.size() or index == _arena_index:
+	if index < 0 or index >= ARENA_SCENES.size() or index == _arena_index:
 		return
 	# A gated arena stays shut: the index is legal but the unlockable is not earned
 	# (the vault is what "clear wave 20" buys).

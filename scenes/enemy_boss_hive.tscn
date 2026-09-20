@@ -1,0 +1,13 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/enemy_boss_hive.gd" id="1"]
+[ext_resource type="PackedScene" path="res://scenes/enemy_boss.tscn" id="2"]
+
+[node name="Enemy" instance=ExtResource("2")]
+script = ExtResource("1")
+max_health = 6200
+move_speed = 72.0
+minion_count = 3
+ring_bullets = 10
+body_color_full = Color(0.18, 0.72, 0.3, 1)
+body_color_hurt = Color(0.95, 0.8, 0.15, 1)
