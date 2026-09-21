@@ -141,7 +141,7 @@ func _ready() -> void:
 
 
 ## Test-only screenshot mode: `NEON_SHOT`
-## (optionally `=run|shop|over|pause|unlock`) in the ENGINE args (before --)
+## (optionally `=run|shop|over|pause|unlock|beasts`) in the ENGINE args (before --)
 ## captures one settled frame and quits. Nothing
 ## renders headlessly, so this is how the LOOK gets verified: run the non-headless
 ## console binary and inspect the PNG. The mode goes in the FILENAME, or every
@@ -174,6 +174,18 @@ func _capture_screenshot() -> void:
 			toggle_pause()
 			if mode == "unlock":
 				_pause_menu.show_tab(1)
+		"beasts":
+			# The BESTIARY tab, with the whole roster already encountered so the
+			# capture shows the tab as it reads once the game has been played --
+			# the shot must not bank that into the player's real save, so this
+			# mode never calls Beasts.flush().
+			start_game()
+			for bd: Dictionary in Beasts.DEFS:
+				Beasts.note_encountered(String(bd.scene))
+			toggle_pause()
+			_pause_menu.show_tab_named(_pause_menu.BESTIARY_TAB)
+			_pause_menu.refresh_bestiary()
+			Beasts.forget()
 		"deep":
 			# Arena 2, for comparing the retro pass across arenas.
 			start_game()
@@ -563,6 +575,9 @@ func _on_wave_game_over() -> void:
 	# again would double-count this run.
 	Unlockables.evaluate()
 	_game_over.show_game_over(_score, _waves.current_wave, record, _pause_stats())
+	# The BESTIARY set lands with the other lifetime counters: every enemy that
+	# spawned this run is merged into the save here, not once per spawn.
+	Beasts.flush()
 
 
 ## Bank this run's salvage. Its own function so the suite can prove a finished

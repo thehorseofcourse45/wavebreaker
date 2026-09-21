@@ -71,19 +71,22 @@ signal game_over
 @export_group("Difficulty")
 ## Multipliers applied ON TOP of the wave table for the menu's chosen difficulty,
 ## so the table itself is never mutated. `spawn` scales the spawn INTERVAL (lower
-## = more pressure per second). Three knobs, one place, every wave routes here.
+## = more pressure per second) and `elite` scales the wave's elite COUNT (0 = this
+## difficulty never fields an elite at all). One place, every wave routes here.
 const DIFFICULTIES: Dictionary = {
 	# Bumped ~1.5x over the original tuning to counter the shop's power curve:
 	# hp x1.5, spawn interval /1.5 (lower = more pressure per second), and a lighter
 	# x1.1 on speed -- a full x1.5 would put the fastest enemies past the player's
 	# base 230 px/s move speed. NIGHTMARE is bumped with the rest so the ladder
 	# stays ordered (it must always be harder than HARD).
-	"easy": {"hp": 1.13, "speed": 1.01, "spawn": 0.87},
-	"normal": {"hp": 1.5, "speed": 1.1, "spawn": 0.67},
-	"hard": {"hp": 2.1, "speed": 1.19, "spawn": 0.5},
+	# `elite` reads as a difficulty identity rather than a nudge: EASY has none,
+	# NORMAL the authored count, HARD and NIGHTMARE multiply it.
+	"easy": {"hp": 1.13, "speed": 1.01, "spawn": 0.87, "elite": 0.0},
+	"normal": {"hp": 1.5, "speed": 1.1, "spawn": 0.67, "elite": 1.0},
+	"hard": {"hp": 2.1, "speed": 1.19, "spawn": 0.5, "elite": 2.0},
 	# Unlockable "nightmare" (clear a Hard run): the fourth row appears in the menu
 	# only once it is earned -- `unlock` is what the menu filters on.
-	"nightmare": {"hp": 2.55, "speed": 1.27, "spawn": 0.43, "unlock": "nightmare"},
+	"nightmare": {"hp": 2.55, "speed": 1.27, "spawn": 0.43, "elite": 3.0, "unlock": "nightmare"},
 }
 ## Menu order, so the UI never hardcodes the list.
 const DIFFICULTY_ORDER: Array[String] = ["easy", "normal", "hard", "nightmare"]
@@ -156,6 +159,9 @@ var force_affixes: bool = false
 @export var skirmisher_scene: PackedScene = preload("res://scenes/enemy_skirmisher.tscn")
 @export var rammer_scene: PackedScene = preload("res://scenes/enemy_rammer.tscn")
 
+## The roster's scene paths live in the `Enemy scenes` export group as friendlier
+## per-type @export PackedScenes; the registry (Beasts.DEFS) is now what the two
+## lookups above read, so those exports are legacy and unused.
 var current_wave: int = 0
 var is_running: bool = false
 var shop_pause_enabled: bool = false  # Main picks up wave_cleared and pauses here
@@ -322,14 +328,25 @@ func _start_wave(wave_number: int) -> void:
 	_speed_mult *= float(diff["speed"])
 	_spawn_timer.wait_time = spawn_interval * float(diff["spawn"]) * _director_pace
 	_spawn_queue.clear()
-	for spec: Array in [["chaser", "chaser"], ["rusher", "rusher"], ["tank", "tank"],
-			["weaver", "weaver"], ["orbiter", "orbiter"], ["shooter", "shooter"],
-			["splitter", "splitter"], ["elite", "elite"], ["boss", "boss"],
-			["bulwark", "bulwark"], ["leaper", "leaper"], ["sniper", "sniper"],
-			["pulsar", "pulsar"], ["medic", "medic"], ["skirmisher", "skirmisher"],
-			["rammer", "rammer"]]:
-		for i: int in int(comp.get(spec[0], 0)):
-			_spawn_queue.append(String(spec[1]))
+	# The composition table's keys ARE Beasts' slugs, and the spellings come from
+	# the registry -- a key that matches no row is a type the wave silently never
+	# spawns (and a BESTIARY row that never appears), which is invisible in play.
+	# Elite rows are skipped here: the `elite` count is expanded separately below.
+	for entry: Dictionary in Beasts.roster():
+		var slug: String = String(entry.slug)
+		if slug == "boss" or bool(entry.get("elite", false)):
+			continue   # the boss rule and the elite expansion spawn their own
+		for i: int in int(comp.get(slug, 0)):
+			_spawn_queue.append(slug)
+	# The composition's `elite` count says HOW MANY elites the wave fields; WHICH
+	# archetype each one is comes out of the registry, so an elite can be any
+	# enemy in the game rather than one fixed scene. The difficulty scales the
+	# COUNT on top (EASY fields none at all) -- the director's pressure bonus is
+	# scaled with it, so a cruising run on EASY still spawns no elites.
+	for i: int in int(round(float(comp.get("elite", 0)) * float(diff["elite"]))):
+		var elite_slug: String = Beasts.random_elite_slug()
+		if elite_slug != "":
+			_spawn_queue.append(elite_slug)
 	_shuffle_queue()
 	# What the pace term will measure. A boss wave reports 0: the clock belongs to
 	# the boss, not to its escort.
@@ -500,51 +517,37 @@ func _on_spawn_tick() -> void:
 
 
 func _spawn_enemy(type_name: String) -> void:
+	# ONE lookup per type, out of the same registry the roster and the BESTIARY
+	# read. The row owns the scene, whether this is an elite VARIANT, and the
+	# elite multipliers -- a type whose row is gone can no longer silently spawn a
+	# chaser, and a new enemy needs no `match` arm here.
+	var row: Dictionary = Beasts.roster_row(type_name)
 	var scene: PackedScene = chaser_scene
-	match type_name:
-		"rusher":
-			scene = rusher_scene
-		"tank":
-			scene = tank_scene
-		"weaver":
-			scene = weaver_scene
-		"orbiter":
-			scene = orbiter_scene
-		"shooter":
-			scene = shooter_scene
-		"splitter":
-			scene = splitter_scene
-		"elite":
-			scene = elite_scene
-		"bulwark":
-			scene = bulwark_scene
-		"leaper":
-			scene = leaper_scene
-		"sniper":
-			scene = sniper_scene
-		"pulsar":
-			scene = pulsar_scene
-		"medic":
-			scene = medic_scene
-		"skirmisher":
-			scene = skirmisher_scene
-		"rammer":
-			scene = rammer_scene
-		"boss":
-			var boss_wave_index: int = maxi(floori(float(current_wave) / float(BOSS_EVERY)) - 1, 0)
-			scene = boss_scenes[boss_wave_index % boss_scenes.size()]
+	var row_scene: String = String(row.get("scene", ""))
+	if row_scene != "" and ResourceLoader.exists(row_scene):
+		scene = load(row_scene) as PackedScene
+	if type_name == "boss":
+		var boss_wave_index: int = maxi(floori(float(current_wave) / float(BOSS_EVERY)) - 1, 0)
+		scene = boss_scenes[boss_wave_index % boss_scenes.size()]
+	var is_elite: bool = bool(row.get("elite", false))
 	var enemy: EnemyBase = scene.instantiate() as EnemyBase
 	if enemy == null:
 		push_error("WaveManager: failed to instantiate enemy type '%s'." % type_name)
 		return
-	# Base stats come from the scene's export overrides; wave scaling applies
-	# multiplicatively on top.
-	enemy.max_health = maxi(1, int(round(float(enemy.max_health) * _hp_mult)))
+	# Base stats come from the scene's export overrides; wave scaling and the row's
+	# elite multipliers apply multiplicatively on top.
+	enemy.max_health = maxi(1, int(round(float(enemy.max_health) * _hp_mult * float(row.get("hp_mult", 1.0)))))
+	enemy.score_value = maxi(1, int(round(float(enemy.score_value) * float(row.get("score_mult", 1.0)))))
 	enemy.move_speed *= _speed_mult
-	# Affix roll: skipped for the elite (its shield IS its identity -- two
-	# gates on one take_damage would double-lock it) and the boss (its phases
-	# are its own show).
-	if type_name != "elite" and type_name != "boss":
+	# Elite: set BEFORE it enters the tree (_ready reads it) and it is what puts
+	# the enemy in the "elites" group + the elite row of the BESTIARY.
+	enemy.is_elite = is_elite
+	# Affix: an elite's comes from its row (that IS the elite's shield phase), a
+	# normal enemy rolls one, and the boss never takes either (its phases are its
+	# own show).
+	if is_elite:
+		enemy.affix = String(row.get("affix", ""))
+	elif type_name != "boss":
 		enemy.affix = _roll_affix(current_wave)
 	enemy.position = _pick_spawn_position()
 	# Count it BEFORE it is in the tree: a wave must not read as cleared while

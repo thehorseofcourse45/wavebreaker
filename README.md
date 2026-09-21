@@ -47,6 +47,39 @@ It biases the authored table, it never replaces it: the first wave of a run is
 exactly as authored, and boss waves are exempt -- their escort is deliberately
 trimmed because the boss *is* the wave.
 
+## The bestiary
+
+`Esc` -> **BESTIARY**: every enemy in the game, grouped `NORMAL` / `ELITES` /
+`BOSSES`, each with a portrait, a line on how it fights and its base HP. The
+roster is taller than the window, so the tab scrolls.
+
+Enemies you have not met yet are dimmed and keep their fight hint hidden; the
+progress line counts how many you have met, and that set is saved when a run
+ends. It all comes from one registry (`scripts/beasts.gd`) that the wave spawner
+draws its scenes from too, so adding an enemy is one row there plus its scene --
+never three lists to keep in step.
+
+## Elites
+
+Every archetype you meet also has an **elite variant** (33 bestiary rows in all:
+15 normal, 14 elite, 4 bosses). An elite is the same enemy with a shield phase --
+invulnerable in bursts, cyan while it holds and its natural colour when it drops
+-- plus 2.5x health and 3x score.
+
+The wave table's `elite` column says *how many* elites a wave fields, not which
+ones: the registry picks the archetypes, so an elite can be anything from a
+shielded rusher to a shielded medic. Bosses are excluded -- their phases are
+already their own thing.
+
+**Difficulty decides how many.** `EASY` fields none at all, `NORMAL` the count the
+wave table authors, `HARD` doubles it and `NIGHTMARE` triples it (the same table
+that scales health/speed/spawn, so every wave routes through one place).
+
+Tuning: `WaveManager.DIFFICULTIES[id]["elite"]` for the counts,
+`Beasts.ELITE_HP_MULT` / `ELITE_SCORE_MULT` for the family defaults (a row
+overrides with its own `hp_mult` or `score_mult`), and the shield timings are the
+`shielded` affix in `scripts/enemy.gd`.
+
 ## Run from source
 
 Requires [Godot 4.7](https://godotengine.org/download) (the project uses the

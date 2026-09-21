@@ -47,15 +47,28 @@ signal split_spawned(pair: Array)
 ## archetype from the scene file and asks AudioManager for a generated tone, so a
 ## new enemy type gets its own death sound with no asset authoring.
 @export var death_sound: AudioStream = null
-## Derived archetype tag ("chaser", "boss", ...); names the death tone.
+## Derived archetype tag ("chaser", "boss", ...); names the death tone. Never the
+## enemy's display id: the sniff dispatch compares it against scene stems, so a
+## capitalised BESTIARY id here would silently stop the death tone and the variant
+## tint from matching.
 var archetype: String = ""
+## The BESTIARY row this enemy is (Beasts' display name, e.g. "Warden"). Set in
+## _ready, read only by display paths.
+var id: String = ""
 
 @export_group("Affix")
 ## Elite-style modifier rolled by the WaveManager on spawn (see its affix
 ## exports). Applied in _ready BEFORE the halo is built, so a tinted affix
-## also tints the halo light. Affixed enemies deliberately do NOT join the
-## "elites" group: the elite is the only elite, and elite_kills stays honest.
+## also tints the halo light. An AFFIXED enemy still does not join the "elites"
+## group -- the elite is its own thing now (a base archetype promoted at spawn,
+## see `is_elite`) -- so the two systems stay countable apart.
 var affix: String = ""
+
+## True for an ELITE VARIANT: the WaveManager sets this from the registry row
+## before the enemy enters the tree, and _ready turns it into the "elites" group
+## membership (Main counts elite kills) plus the elite's BESTIARY row. Health and
+## score are scaled by the row, not here.
+var is_elite: bool = false
 
 ## The modifier table: one entry per affix, a tint plus its hooks.
 ## shielded: periodic invulnerability windows (the elite's mechanic, generic).
@@ -165,6 +178,12 @@ func _ready() -> void:
 	add_to_group("enemies")
 	if archetype == "":
 		archetype = get_scene_file_path().get_file().get_basename().trim_prefix("enemy_")
+	# The same stem is this enemy's BESTIARY id (Beasts reads the scene path), and
+	# the archetype is what its per-type death sound is keyed on.
+	id = archetype
+	if is_elite:
+		add_to_group("elites")   # Main counts elite kills for the unlockables
+	Beasts.note_encountered(get_scene_file_path(), is_elite)
 	if death_sound == null:
 		death_sound = AudioManager.enemy_death_stream(archetype)
 	health = max_health

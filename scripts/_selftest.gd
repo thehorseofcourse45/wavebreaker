@@ -1873,12 +1873,25 @@ func _run(main: Node) -> void:
 	if pm_tabs == null:
 		failed.append("pause: the tab container is missing")
 	else:
-		if pm_tabs.get_tab_count() != 4:
-			failed.append("pause: expected 4 owned tabs, found %d" % pm_tabs.get_tab_count())
-		elif pm_tabs.get_tab_title(0) != "MENU" or pm_tabs.get_tab_title(1) != "UNLOCKABLES" \
-				or pm_tabs.get_tab_title(2) != "STATS" or pm_tabs.get_tab_title(3) != "PERKS" \
-				or not pm_tabs.is_tab_hidden(2):
-			failed.append("pause: tab ownership/order or locked STATS visibility is wrong")
+		var pm_titles: Array[String] = []
+		for pm_i: int in pm_tabs.get_tab_count():
+			pm_titles.append(pm_tabs.get_tab_title(pm_i))
+		# The TabContainer orders children by their tree/child order, which the
+		# @onready paths in the .tscn fix -- so compare the WHOLE strip by title,
+		# not by counting: a hidden tab does not shift the list, and an extra child
+		# is caught wherever it was inserted.
+		if pm_titles != ["MENU", "UNLOCKABLES", "STATS", "PERKS", "BESTIARY"]:
+			failed.append("pause: the tab strip is %s" % str(pm_titles))
+		# STATS is hidden until earned; the rest are reference material that is
+		# never gated. Read by TITLE, not index, so a hidden tab cannot shift the
+		# answer to a different one.
+		for pm_name: String in ["UNLOCKABLES", "PERKS", "BESTIARY"]:
+			var pm_at: int = -1
+			for pm_i: int in pm_tabs.get_tab_count():
+				if pm_tabs.get_tab_title(pm_i) == pm_name:
+					pm_at = pm_i
+			if pm_at < 0 or pm_tabs.is_tab_hidden(pm_at):
+				failed.append("pause: the %s tab is hidden or missing" % pm_name)
 		pm_tabs.current_tab = 1
 		await main.get_tree().process_frame
 		var unlock_tab: Control = pm_tabs.get_current_tab_control() as Control
@@ -1898,6 +1911,378 @@ func _run(main: Node) -> void:
 			"MENU/ResumeButton", "MENU/QuitButton"]:
 		if pm.get_node_or_null("Center/Card/Tabs/" + pm_path) == null:
 			failed.append("pause: %s went missing in the tab restructure" % pm_path)
+
+	# -- Bestiary: every enemy, grouped, drawn from the one registry ------------
+	# Three failure shapes: a row that names no scene (a portrait that cannot be
+	# drawn), a group heading with no rows under it (an empty section), and the
+	# encounter set never being written. Each is silent in play.
+	var be_tab: Control = null
+	for be_i: int in pm_tabs.get_tab_count():
+		if pm_tabs.get_tab_title(be_i) == "BESTIARY":
+			be_tab = pm_tabs.get_tab_control(be_i) as Control
+	if be_tab == null:
+		failed.append("bestiary: the tab is missing")
+	else:
+		for be_d: Dictionary in Beasts.DEFS:
+			var be_scene: String = String(be_d.scene)
+			if not ResourceLoader.exists(be_scene):
+				failed.append("bestiary: '%s' names %s, which does not exist" % [String(be_d.id), be_scene])
+			# An ELITE row is a variant, not a scene: `elite_<base slug>` names the
+			# enemy it upgrades (the chaser's elite is its own scene, the rest share
+			# the base scene so the portrait is the silhouette you meet). What must
+			# hold is that it HAS a base, that it is tougher, and that it has an
+			# invulnerability phase of its own -- either the shielded affix or a
+			# scene that shields itself.
+			if bool(be_d.get("elite", false)):
+				var be_row_slug: String = String(be_d.get("slug", ""))
+				var be_base_row: Dictionary = {}
+				for be_other: Dictionary in Beasts.DEFS:
+					if not bool(be_other.get("elite", false)) \
+							and String(be_other.get("slug", "")) != "" \
+							and ("elite_" + String(be_other.slug)) == be_row_slug:
+						be_base_row = be_other
+				if be_base_row.is_empty():
+					failed.append("bestiary: elite '%s' (slug '%s') upgrades no enemy you meet"
+							% [String(be_d.id), be_row_slug])
+				elif String(be_d.scene) == String(be_base_row.scene):
+					# A shared scene must document the family multiplier: the row's hp
+					# is what the tab prints and the spawner scales from.
+					var be_want_hp: int = maxi(1, int(round(float(be_base_row.hp)
+							* float(be_d.get("hp_mult", Beasts.ELITE_HP_MULT)))))
+					if int(be_d.hp) != be_want_hp:
+						failed.append("bestiary: elite '%s' lists %d hp, base %d x %.1f says %d"
+								% [String(be_d.id), int(be_d.hp), int(be_base_row.hp),
+									float(be_d.get("hp_mult", Beasts.ELITE_HP_MULT)), be_want_hp])
+				elif int(be_d.hp) <= int(be_base_row.hp):
+					failed.append("bestiary: elite '%s' (%d hp) is no tougher than its base (%d hp)"
+							% [String(be_d.id), int(be_d.hp), int(be_base_row.hp)])
+				# The effective affix is what the spawner uses, so that is what the
+				# probe reads (the registry applies the family default).
+				var be_eff_affix: String = String(Beasts.roster_row(be_row_slug).get("affix", ""))
+				if be_eff_affix != "shielded" and be_scene != "res://scenes/enemy_elite.tscn":
+					failed.append("bestiary: elite '%s' has no shield phase (affix '%s', scene %s)"
+							% [String(be_d.id), be_eff_affix, be_scene.get_file()])
+				continue
+			# The GROUP must be the classification the GAME uses, not a label the
+			# registry invented: the scenes tag themselves ("elites"/"bosses") and
+			# Main's kill handler counts through those groups. A row filed under the
+			# wrong heading is a bestiary that lies about the roster.
+			# The variant groups are added in _ready, which only runs once the node is
+			# IN THE TREE -- an instantiate-and-read probe sees no groups at all and
+			# would fail every elite/boss row for the wrong reason.
+			var be_inst: Node = load(be_scene).instantiate()
+			main._enemy_container.add_child(be_inst)
+			await main.get_tree().process_frame
+			var be_in_elites: bool = be_inst.is_in_group("elites")
+			var be_in_bosses: bool = be_inst.is_in_group("bosses")
+			be_inst.free()
+			var be_group_want: String = String(be_d.group)
+			var be_group_got: String = "bosses" if be_in_bosses else ("elites" if be_in_elites else "")
+			if be_group_want != be_group_got:
+				failed.append("bestiary: '%s' is filed under '%s' but the scene tags itself '%s'"
+						% [String(be_d.id), be_group_want, be_group_got])
+		# Every archetype you meet needs exactly ONE elite variant: two rows for one
+		# base is a duplicate in the tab, none is a promise the tab does not keep.
+		# BOSSES are deliberately excluded -- their phases are their own show and an
+		# elite boss is a different design, not a multiplier.
+		for be_row: Dictionary in Beasts.DEFS:
+			var be_row_slug2: String = String(be_row.get("slug", ""))
+			if bool(be_row.get("elite", false)) or be_row_slug2 == "" or be_row_slug2 == "boss":
+				continue
+			var be_variants: int = 0
+			for be_cand: Dictionary in Beasts.DEFS:
+				if bool(be_cand.get("elite", false)) \
+						and String(be_cand.get("slug", "")) == "elite_" + be_row_slug2:
+					be_variants += 1
+			if be_variants != 1:
+				failed.append("bestiary: '%s' has %d elite variants, expected exactly 1"
+						% [String(be_row.id), be_variants])
+		if Beasts.elite_rows().is_empty():
+			failed.append("bestiary: the elite roster is empty")
+		for be_group: String in Beasts.groups():
+			var be_key: String = be_group if be_group != "" else "normal"
+			var be_tiles: Node = be_tab.find_child("Tiles_" + be_key, true, false)
+			var be_head: Node = be_tab.find_child("Head_" + be_key, true, false)
+			if be_tiles == null or be_head == null:
+				failed.append("bestiary: group '%s' has no heading/rows" % be_key)
+				continue
+			if be_tiles.get_child_count() != Beasts.group(be_group).size():
+				failed.append("bestiary: group '%s' shows %d rows for %d registry entries"
+						% [be_key, be_tiles.get_child_count(), Beasts.group(be_group).size()])
+			# Every row in a group must be laid out to the SAME width, or the two
+			# columns come out ragged: a GridContainer sizes each column to its
+			# widest child's minimum, and an autowrap hint's minimum is its longest
+			# word -- which squeezed the elite group into half its grid.
+			var be_row_w: Array[float] = []
+			for be_line: Node in be_tiles.get_children():
+				be_row_w.append((be_line as Control).size.x)
+			if not be_row_w.is_empty():
+				var be_min: float = be_row_w.min()
+				var be_max: float = be_row_w.max()
+				if be_max - be_min > 0.5:
+					failed.append("bestiary: group '%s' rows are %.0f..%.0f px wide"
+							% [be_key, be_min, be_max])
+				if be_max * 2.0 > (be_tiles as Control).size.x + 0.5:
+					failed.append("bestiary: group '%s' columns do not fit (row %.0f px, grid %.0f px)"
+							% [be_key, be_max, (be_tiles as Control).size.x])
+			# Every row the player can actually meet must be spawnable, or the tab
+			# lists an enemy the game never produces.
+			for be_d2: Dictionary in Beasts.group(be_group):
+				var be_slug: String = String(be_d2.get("slug", ""))
+				if be_slug != "" and be_slug != "boss":
+					var be_has_slug: bool = false
+					for be_entry: Dictionary in Beasts.roster():
+						if String(be_entry.slug) == be_slug:
+							be_has_slug = true
+					if not be_has_slug:
+						failed.append("bestiary: '%s' has slug '%s' that the spawner cannot draw" % [String(be_d2.id), be_slug])
+		# The heading text comes from the registry map, never a UI literal.
+		if String(Beasts.GROUP_LABELS.get("", "")) != "NORMAL":
+			failed.append("bestiary: the normal-group heading is not in GROUP_LABELS")
+		# The multi-line hitboxes (a Hint label whose text wraps) are what make a
+		# row taller than the icon: the tab must still fit the card.
+		var be_hints: int = 0
+		for be_node: Node in be_tab.find_children("*", "Label", true, false):
+			if String(be_node.name) == "Hint" and (be_node as Label).text != "":
+				be_hints += 1
+		if be_hints != Beasts.DEFS.size():
+			failed.append("bestiary: %d hint labels for %d enemies" % [be_hints, Beasts.DEFS.size()])
+		# ...and the card must fit the window with this tab current.
+		pm_tabs.current_tab = 4
+		await main.get_tree().process_frame
+		var be_card: Control = pm.get_node_or_null("Center/Card") as Control
+		if be_card != null and be_card.get_combined_minimum_size().y > 715.0:
+			failed.append("bestiary: the pause card wants %.0f px of a 720 px window with the bestiary open"
+					% be_card.get_combined_minimum_size().y)
+		# The roster is taller than any window: it lives in a ScrollContainer, and
+		# the LAST group has to be reachable or the tab lies about "every enemy".
+		var be_scroll: ScrollContainer = be_tab as ScrollContainer
+		if be_scroll == null:
+			failed.append("bestiary: the tab is not scrollable (the roster cannot fit a window)")
+		elif be_scroll.get_v_scroll_bar().max_value <= be_scroll.size.y:
+			failed.append("bestiary: nothing to scroll -- content %.0f px inside a %.0f px viewport"
+					% [be_scroll.get_v_scroll_bar().max_value, be_scroll.size.y])
+	# -- The spawner draws its scenes from the SAME registry ---------------------
+	# The lookup replaced a hand-written match, so this is what keeps it honest: a
+	# slug that resolves to the wrong scene (or to the chaser fallback) would
+	# otherwise only show up as "the waves feel wrong".
+	var sp_before: Array[Node] = main._enemy_container.get_children()
+	var sp_telegraph: float = wm.spawn_telegraph_time
+	wm.spawn_telegraph_time = 0.0
+	wm.is_running = true
+	# Pin the wave scaling so the elite health multiplier is measurable on its own.
+	var sp_hp_saved: float = wm._hp_mult
+	var sp_spd_saved: float = wm._speed_mult
+	wm._hp_mult = 1.0
+	wm._speed_mult = 1.0
+	var sp_wrong: Array[String] = []
+	var sp_missing: Array[String] = []
+	var sp_elite_faults: Array[String] = []
+	for sp_row: Dictionary in Beasts.roster():
+		var sp_slug: String = String(sp_row.slug)
+		if sp_slug == "boss":
+			continue   # the boss rule picks its own scene (asserted below)
+		wm._spawn_enemy(sp_slug)
+		await main.get_tree().process_frame
+		var sp_new: Node = null
+		for sp_c: Node in main._enemy_container.get_children():
+			if not sp_before.has(sp_c):
+				sp_new = sp_c
+		if sp_new == null:
+			sp_missing.append(sp_slug)
+			continue
+		if sp_new.get_scene_file_path() != String(sp_row.scene):
+			sp_wrong.append("%s -> %s" % [sp_slug, sp_new.get_scene_file_path()])
+		# The elite flag has to reach the group (counters) and the health (the row's
+		# multiplier), and a normal enemy must NOT be counted as an elite.
+		var sp_is_elite: bool = bool(sp_row.get("elite", false))
+		if sp_new.is_in_group("elites") != sp_is_elite:
+			sp_elite_faults.append("%s: group elites=%s" % [sp_slug, str(sp_new.is_in_group("elites"))])
+		var sp_ref: Node = load(String(sp_row.scene)).instantiate()
+		var sp_want_hp: int = maxi(1, int(round(float(sp_ref.max_health) * float(sp_row.hp_mult))))
+		sp_ref.free()
+		if sp_new.max_health != sp_want_hp:
+			sp_elite_faults.append("%s: %d hp, the row wants %d" % [sp_slug, sp_new.max_health, sp_want_hp])
+		if sp_is_elite and String(sp_row.affix) != "" and sp_new.affix != String(sp_row.affix):
+			sp_elite_faults.append("%s: affix '%s', the row wants '%s'" % [sp_slug, sp_new.affix, String(sp_row.affix)])
+		sp_before.append(sp_new)
+	wm._hp_mult = sp_hp_saved
+	wm._speed_mult = sp_spd_saved
+	if not sp_missing.is_empty():
+		failed.append("bestiary: the spawner produced nothing for %s" % str(sp_missing))
+	if not sp_wrong.is_empty():
+		failed.append("bestiary: the spawner used the wrong scene for %s" % str(sp_wrong))
+	if not sp_elite_faults.is_empty():
+		failed.append("bestiary: elite variants are wrong: %s" % str(sp_elite_faults))
+	# The boss rule still rotates its OWN scenes, which the roster only names.
+	wm._spawn_enemy("boss")
+	await main.get_tree().process_frame
+	var sp_boss: Node = null
+	for sp_c2: Node in main._enemy_container.get_children():
+		if not sp_before.has(sp_c2):
+			sp_boss = sp_c2
+	var sp_boss_scenes: Array[String] = []
+	for sp_row2: Dictionary in Beasts.group("bosses"):
+		sp_boss_scenes.append(String(sp_row2.scene))
+	if sp_boss == null or not sp_boss_scenes.has(sp_boss.get_scene_file_path()):
+		failed.append("bestiary: the boss rule spawned %s, which is not a boss row"
+				% ("nothing" if sp_boss == null else sp_boss.get_scene_file_path()))
+	for sp_node: Node in main._enemy_container.get_children():
+		if not sp_before.has(sp_node):
+			sp_node.queue_free()
+	for sp_frame: int in 2:
+		await main.get_tree().process_frame
+	wm.spawn_telegraph_time = sp_telegraph
+	wm._alive = 0
+	wm.is_running = false
+	wm.stop()
+	# -- Difficulty owns the elite COUNT ----------------------------------------
+	# EASY fields none at all, NORMAL the authored count, HARD and NIGHTMARE
+	# multiply it -- and the ladder has to stay ordered, or "harder" stops meaning
+	# anything. The count is read off the real spawn queue, not the table.
+	for df_id: String in WaveManager.DIFFICULTY_ORDER:
+		var df_row: Dictionary = WaveManager.DIFFICULTIES[df_id]
+		for df_key: String in ["hp", "speed", "spawn", "elite"]:
+			if not df_row.has(df_key):
+				failed.append("difficulty: '%s' has no '%s'" % [df_id, df_key])
+	var df_saved: String = wm.difficulty
+	var df_counts: Dictionary = {}
+	wm.is_running = true
+	for df_id2: String in WaveManager.DIFFICULTY_ORDER:
+		if not WaveManager.difficulty_unlocked(df_id2):
+			continue
+		wm.difficulty = df_id2
+		# No director pressure: this measures the table and the difficulty row.
+		wm._last_wave_seconds = 0.0
+		wm._start_wave(6)   # wave 6 is the first authored elite wave (table says 1)
+		var df_n: int = 0
+		for df_entry: String in wm._spawn_queue:
+			if Beasts.is_elite_slug(df_entry):
+				df_n += 1
+		df_counts[df_id2] = df_n
+		wm.stop()
+	if int(df_counts.get("easy", -1)) != 0:
+		failed.append("difficulty: EASY fielded %s elites" % str(df_counts.get("easy")))
+	var df_normal: int = int(df_counts.get("normal", 0))
+	var df_hard: int = int(df_counts.get("hard", 0))
+	if df_normal < 1:
+		failed.append("difficulty: NORMAL fielded %d elites on the first elite wave" % df_normal)
+	if df_hard <= df_normal:
+		failed.append("difficulty: HARD (%d) does not field more elites than NORMAL (%d)"
+				% [df_hard, df_normal])
+	if df_counts.has("nightmare") and int(df_counts["nightmare"]) < df_hard:
+		failed.append("difficulty: NIGHTMARE (%d) fields fewer elites than HARD (%d)"
+				% [int(df_counts["nightmare"]), df_hard])
+	wm.difficulty = df_saved
+	wm._alive = 0
+	wm.is_running = false
+	wm.stop()
+
+	# -- The portraits are CENTRED in their tiles -------------------------------
+	# The bug this pins: the drawing was left at the SubViewport's origin, so a
+	# body authored around (0,0) put its centre on the tile's TOP-LEFT corner and
+	# three quarters of it fell outside -- "the portraits look cut off". Headless
+	# cannot read the rendered pixels, so this measures the geometry the renderer
+	# would use: the drawn box, its centre, and how much of the tile it fills.
+	var pv_seen: int = 0
+	for pv_path: String in ["res://scenes/enemy_chaser.tscn", "res://scenes/enemy_boss.tscn",
+			"res://scenes/enemy_tank.tscn", "res://scenes/enemy_mini.tscn",
+			"res://scenes/enemy_pulsar.tscn"]:
+		if not ResourceLoader.exists(pv_path):
+			continue
+		var pv_tex: Texture2D = pm.beast_texture(pv_path)
+		if pv_tex == null:
+			failed.append("bestiary portrait: %s drew nothing" % pv_path.get_file())
+			continue
+		pv_seen += 1
+		var pv_vp: SubViewport = null
+		for pv_c: Node in pm.get_children():
+			if pv_c is SubViewport:
+				pv_vp = pv_c as SubViewport
+		if pv_vp == null or pv_vp.get_child_count() == 0:
+			failed.append("bestiary portrait: %s has no drawing canvas" % pv_path.get_file())
+			continue
+		var pv_canvas: Node2D = pv_vp.get_child(0) as Node2D
+		var pv_poly: Polygon2D = null
+		for pv_n: Node in pv_canvas.get_children():
+			if pv_n is Polygon2D:
+				pv_poly = pv_n as Polygon2D
+				break
+		if pv_canvas == null or pv_poly == null:
+			failed.append("bestiary portrait: %s has no polygon" % pv_path.get_file())
+			continue
+		# The drawn box = the polygon, scaled and offset like the renderer will.
+		var pv_box := Rect2(pv_poly.polygon[0], Vector2.ZERO)
+		for pv_pt: Vector2 in pv_poly.polygon:
+			pv_box = pv_box.expand(pv_pt)
+		pv_box = Rect2(pv_box.position * pv_poly.scale + pv_canvas.position,
+				pv_box.size * pv_poly.scale)
+		var pv_centre: Vector2 = pv_box.get_center()
+		var pv_want: float = float(PauseMenu.BEAST_ICON) * 0.5
+		if pv_box.position.x < -0.5 or pv_box.position.y < -0.5 \
+				or pv_box.end.x > pv_want * 2.0 + 0.5 or pv_box.end.y > pv_want * 2.0 + 0.5:
+			failed.append("bestiary portrait: %s draws outside its tile (%s)"
+					% [pv_path.get_file(), str(pv_box)])
+		if absf(pv_centre.x - pv_want) > 2.0 or absf(pv_centre.y - pv_want) > 2.0:
+			failed.append("bestiary portrait: %s is centred at %s, not the tile's middle (%s)"
+					% [pv_path.get_file(), str(pv_centre), str(Vector2(pv_want, pv_want))])
+		var pv_fill: float = maxf(pv_box.size.x, pv_box.size.y) / (pv_want * 2.0)
+		if pv_fill < 0.5:
+			failed.append("bestiary portrait: %s fills %.0f%% of its tile" % [pv_path.get_file(), pv_fill * 100.0])
+	if pv_seen < 2:
+		failed.append("bestiary portrait: only %d portraits were measurable" % pv_seen)
+
+	pm.show_tab(0)
+
+	# -- Bestiary encounters: spawning an enemy notes it, and a run banks it -----
+	Beasts.forget()
+	Storage.set_value(Beasts.SAVE_KEY, {})
+	if Beasts.seen_count() != 0:
+		failed.append("bestiary: a cleared encounter set still reports %d seen" % Beasts.seen_count())
+	var be_probe: Node = load("res://scenes/enemy_sniper.tscn").instantiate()
+	main._enemy_container.add_child(be_probe)
+	await main.get_tree().process_frame
+	if not Beasts.seen_ids().has("Sniper") or Beasts.seen_count() != 1:
+		failed.append("bestiary: spawning a sniper tracked %d seen" % Beasts.seen_count())
+	be_probe.free()
+	# The id is the SCENE's, not the instance's class: an enemy scene the registry
+	# does not list must not invent a row -- and an ELITE records the variant row,
+	# not its base's (the two share a scene, so the flag is the only discriminator).
+	Beasts.note_encountered("res://scenes/enemy_base.tscn")
+	if Beasts.seen_count() != 1:
+		failed.append("bestiary: an unlisted scene added a row (now %d seen)" % Beasts.seen_count())
+	var be_seen_before: int = Beasts.seen_count()
+	Beasts.note_encountered("res://scenes/enemy_sniper.tscn", true)
+	if not Beasts.seen_ids().has("Elite Sniper") or Beasts.seen_count() != be_seen_before + 1:
+		failed.append("bestiary: an elite encounter recorded the wrong row (%s)"
+				% str(Beasts.seen_ids().keys()))
+	Beasts.flush()
+	# Sniper + Elite Sniper: two rows, one scene.
+	if int((Storage.read_all().get(Beasts.SAVE_KEY, {}) as Dictionary).size()) != 2:
+		failed.append("bestiary: flush() did not write the encounter set to the save")
+	pm.refresh_bestiary()
+	if String(pm._stats_values["seen"].text) != "2 / %d" % Beasts.DEFS.size():
+		failed.append("bestiary: the progress line reads '%s'" % pm._stats_values["seen"].text)
+	# The styling follows the set: the met enemy's hint is shown, an unmet one's is
+	# not -- text nobody has earned must not be readable.
+	var be_met_line: Node = be_tab.find_child("Sniper", true, false) if be_tab != null else null
+	var be_unmet_line: Node = be_tab.find_child("Medic", true, false) if be_tab != null else null
+	if be_met_line == null or be_unmet_line == null:
+		failed.append("bestiary: the probe could not find its rows by id")
+	else:
+		if not (be_met_line.get_node("Hint") as Label).visible:
+			failed.append("bestiary: a met enemy still hides its hint")
+		if (be_unmet_line.get_node("Hint") as Label).visible:
+			failed.append("bestiary: an unmet enemy shows its hint")
+		if (be_unmet_line.get_node("Icon") as TextureRect).texture == null:
+			failed.append("bestiary: an unmet enemy has no portrait")
+		# A caption, not the monster: the row must not be labelled with the
+		# capitalised BESTIARY id, which is display-only data.
+		if (be_unmet_line.get_node("Name") as Label).text != "MEDIC":
+			failed.append("bestiary: the row is captioned '%s'" % (be_unmet_line.get_node("Name") as Label).text)
+	Beasts.forget()
+	Storage.set_value(Beasts.SAVE_KEY, {})
+	pm.refresh_bestiary()
 
 	# -- Unlockables: 20 icons, 64x64 each, all greyed while locked ------------
 	var unlock_grid: GridContainer = pm.get_node_or_null("Center/Card/Tabs/UNLOCKABLES/Grid") as GridContainer
@@ -3075,7 +3460,10 @@ func _run(main: Node) -> void:
 	wm._last_roster = 40
 	wm._start_wave(dr_wave)
 	var dr_heavy: int = wm._spawn_queue.size()
-	var dr_heavy_elites: int = wm._spawn_queue.count("elite")
+	var dr_heavy_elites: int = 0
+	for dr_entry: String in wm._spawn_queue:
+		if Beasts.is_elite_slug(dr_entry):
+			dr_heavy_elites += 1
 	if wm.pressure <= 0.3:
 		failed.append("director: an untouched second-long wave did not read as cruising (%.2f)" % wm.pressure)
 	if dr_heavy <= dr_authored:

@@ -40,6 +40,8 @@ const STATS_TAB := "STATS"
 const PERKS_TAB := "PERKS"
 ## Row definitions: {"key", "text"} plus "header" for a section title. The values
 ## come from Main (this run) and the save (lifetime), never from this script.
+## A row may instead carry "split" -- a header whose value goes in a LEFT cell and a
+## RIGHT cell (the split's second text), for two-column tables like the BESTIARY.
 const STATS_ROWS: Array[Dictionary] = [
 	{"key": "this_run", "text": "THIS RUN", "header": true},
 	{"key": "wave", "text": "WAVE"},
@@ -59,11 +61,45 @@ const STATS_ROWS: Array[Dictionary] = [
 	{"key": "by_difficulty", "text": "BEST WAVE BY DIFFICULTY", "header": true},
 ]
 
+## The BESTIARY tab: every enemy in the game, grouped. The rows live in
+## Beasts.DEFS (read by the WaveManager too -- one list, not three), and the
+## headings are just the tagging group on the left. Two columns; the GROUP cell is
+## the tag, so the roster can grow without the labels and the rows drifting apart.
+const BESTIARY_TAB := "BESTIARY"
+const BESTIARY_HEAD: Array[Dictionary] = [
+	{"key": "seen_all", "text": "ENCOUNTERED", "header": true},
+	{"key": "seen", "text": "BESTIARY PROGRESS"},
+	{"key": "affixes", "text": "AFFIXES", "header": true},
+	{"key": "affix_hint", "text": "RANDOM MODIFIERS"},
+]
+
 var _stats_page: VBoxContainer = null
+var _bestiary_page: VBoxContainer = null
 var _stats_values: Dictionary = {}   # row key -> its value Label
 var _perks_page: VBoxContainer = null
 var _salvage_label: Label = null
 var _perk_rows: Dictionary = {}      # perk id -> {"btn": Button, "label": Label}
+
+## Room for the LEFT cell of a split row (an enemy name) and the RIGHT cell (its
+## HP). Sized to the longest real name -- "ELITE SKIRMISHER", uppercased -- so
+## nothing is clipped at any scale; the label also clips rather than widening, so
+## a longer name can never ragged the grid.
+const BEAST_NAME_WIDTH := 165
+const BEAST_HINT_WIDTH := 300
+const BEAST_HP_WIDTH := 56
+## Portraits are generated at runtime (see beast_texture), so this is a render
+## target size, not an asset size.
+const BEAST_ICON := 40
+## One grid cell's width: icon + name + hint + HP + the three gaps between them.
+## EVERY row carries it, so a group's two columns come out equal whatever its text
+## (a GridContainer otherwise sizes a column to its widest child's MINIMUM, and an
+## autowrap hint's minimum is its longest word).
+const BEAST_ROW_SEPARATION := 8
+const BEAST_ROW_WIDTH := BEAST_ICON + BEAST_NAME_WIDTH + BEAST_HINT_WIDTH + BEAST_HP_WIDTH \
+		+ BEAST_ROW_SEPARATION * 3
+## An enemy the player has never met: portrait and name stay (you can look up what
+## the thing that killed you looked like), the fight hint does not.
+const UNMET_MODULATE := Color(0.42, 0.46, 0.55)
 
 
 func _ready() -> void:
@@ -78,8 +114,10 @@ func _ready() -> void:
 	_build_unlockables()
 	_build_stats()
 	_build_perks()
+	_build_bestiary()
 	refresh_stats()
 	refresh_perks()
+	refresh_bestiary()
 
 
 ## Build the STATS page once. `refresh_stats()` decides whether the TabContainer
@@ -89,29 +127,36 @@ func _build_stats() -> void:
 	_stats_page.name = STATS_TAB
 	_stats_page.add_theme_constant_override("separation", 4)
 	for row: Dictionary in STATS_ROWS:
-		if bool(row.get("header", false)):
-			var head := Label.new()
-			head.text = String(row.text)
-			head.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-			head.modulate = Color(1, 1, 1, 0.65)
-			_stats_page.add_child(head)
-			continue
-		_stats_values[String(row.key)] = _add_stats_line(_stats_page, String(row.text))
+		var is_head: bool = bool(row.get("header", false))
+		var cell: Label = _add_stats_line(_stats_page, String(row.text), is_head,
+				String(row.get("split", "")))
+		if not is_head:
+			_stats_values[String(row.key)] = cell
 	# One line per difficulty, in the registry order the menu uses.
 	for id: String in WaveManager.DIFFICULTY_ORDER:
 		_stats_values["difficulty_" + id] = _add_stats_line(_stats_page, id.to_upper())
 	_tabs.add_child(_stats_page)
 
 
-## Name on the left, value on the right. Returns the value Label, which is the
-## only thing refresh_stats rewrites.
-func _add_stats_line(parent: Node, label_text: String) -> Label:
+## Name on the left, value on the right. Returns the right-hand Label, which is the
+## only thing refresh_stats rewrites. A `header` row is a section title instead; a
+## header carrying `split` puts a second title in the RIGHT cell, which is how the
+## BESTIARY's two columns get their headings (one code path, one row shape).
+func _add_stats_line(parent: Node, label_text: String, header: bool = false,
+		split: String = "") -> Label:
 	var line := HBoxContainer.new()
 	var name_label := Label.new()
 	name_label.text = label_text
-	name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	if header:
+		name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT if split != "" \
+				else HORIZONTAL_ALIGNMENT_CENTER
+		name_label.modulate = Color(1, 1, 1, 0.65)
+	else:
+		name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var value_label := Label.new()
-	value_label.text = "-"
+	# A header with no second title gets NO value cell text: a lone "-" next to a
+	# section title reads as missing data.
+	value_label.text = split if split != "" else ("-" if not header else "")
 	value_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	line.add_child(name_label)
 	line.add_child(value_label)
@@ -269,6 +314,205 @@ func refresh_unlockables() -> void:
 	_unlock_count.text = "%d / %d UNLOCKED" % [Unlockables.count_unlocked(), Unlockables.DEFS.size()]
 
 
+## The BESTIARY page: two columns, built in code (like STATS and PERKS -- no scene
+## to keep in sync). The values are read-only reference data; refresh_bestiary()
+## only rewrites the progress line, so a new enemy added to Beasts.DEFS shows up
+## here with no scene edit at all.
+func _build_bestiary() -> void:
+	_bestiary_page = VBoxContainer.new()
+	_bestiary_page.name = BESTIARY_TAB
+	_bestiary_page.add_theme_constant_override("separation", 4)
+	for head: Dictionary in BESTIARY_HEAD:
+		if not bool(head.get("header", false)):
+			_stats_values[String(head.key)] = _add_stats_line(_bestiary_page,
+					String(head.text), false, "")
+			continue
+		_add_stats_line(_bestiary_page, String(head.text), true, String(head.get("split", "")))
+		# The section head is NAMED too, so a probe can find it without counting
+		# children (the group headings and their grids interleave below).
+		_bestiary_page.get_child(_bestiary_page.get_child_count() - 1).name = \
+				"BestiaryHead_" + String(head.key)
+	# One grid per group, so the two columns line up inside each group and the
+	# group headings above them are free to be different heights. The grid is
+	# NAMED after the group and its row cells after the enemy id -- that is how
+	# the suite finds a row without depending on the scroll position.
+	for group_key: String in Beasts.groups():
+		# _add_stats_line returns the RIGHT cell (a Label); the row is its parent.
+		_add_stats_line(_bestiary_page, String(Beasts.GROUP_LABELS[group_key]), true, "HP")
+		var head_line: Node = _bestiary_page.get_child(_bestiary_page.get_child_count() - 1)
+		head_line.name = "Head_" + (group_key if group_key != "" else "normal")
+		var tiles := GridContainer.new()
+		tiles.name = "Tiles_" + (group_key if group_key != "" else "normal")
+		tiles.columns = 2
+		tiles.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		tiles.add_theme_constant_override("h_separation", 10)
+		tiles.add_theme_constant_override("v_separation", 6)
+		for d: Dictionary in Beasts.group(group_key):
+			var id: String = String(d.id)
+			var line := HBoxContainer.new()
+			line.name = id
+			line.add_theme_constant_override("separation", BEAST_ROW_SEPARATION)
+			# A FIXED row width, or a GridContainer sizes each column to its widest
+			# child's minimum and an autowrap hint's minimum is its longest WORD --
+			# which made the elite group's columns ~270 px while the normal group's
+			# filled 570, leaving half the grid empty for one group and not the
+			# other. One number for every row keeps the two columns aligned.
+			line.custom_minimum_size = Vector2(BEAST_ROW_WIDTH, 0)
+			line.add_child(_beast_icon(String(d.scene)))
+			var name_label := Label.new()
+			name_label.name = "Name"
+			name_label.text = String(d.name).to_upper()
+			name_label.custom_minimum_size = Vector2(BEAST_NAME_WIDTH, 0)
+			# Clip rather than widen: a name longer than the cell must not push the
+			# grid's column out (that is what ragged the two columns apart).
+			name_label.clip_text = true
+			name_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+			name_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+			line.add_child(name_label)
+			var hint_label := Label.new()
+			hint_label.name = "Hint"
+			# Fixed size instead of autowrap: an autowrap Label reports a wild
+			# minimum height before its first layout, which inflates the card.
+			hint_label.custom_minimum_size = Vector2(BEAST_HINT_WIDTH, 0)
+			hint_label.add_theme_font_size_override("font_size", 12)
+			hint_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			hint_label.modulate = Color(1, 1, 1, 0.72)
+			hint_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+			hint_label.text = String(d.hint)
+			line.add_child(hint_label)
+			var hp_label := Label.new()
+			hp_label.name = "Hp"
+			hp_label.text = str(int(d.hp))
+			hp_label.custom_minimum_size = Vector2(BEAST_HP_WIDTH, 0)
+			hp_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+			hp_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+			line.add_child(hp_label)
+			tiles.add_child(line)
+		_bestiary_page.add_child(tiles)
+	# The spawn affixes: the same table the WaveManager rolls from, so a new affix
+	# appears here without a second list.
+	var affix_label := Label.new()
+	affix_label.name = "Affixes"
+	affix_label.custom_minimum_size = Vector2(BEAST_HINT_WIDTH + BEAST_NAME_WIDTH, 0)
+	affix_label.add_theme_font_size_override("font_size", 12)
+	affix_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	affix_label.text = _affix_text()
+	_bestiary_page.add_child(affix_label)
+	var scroll := ScrollContainer.new()
+	# Named: the TabContainer uses a child's NAME as its tab title, and the page's
+	# own name is nested inside this wrapper.
+	scroll.name = BESTIARY_TAB
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.custom_minimum_size = Vector2(620, 0)
+	scroll.add_child(_bestiary_page)
+	_tabs.add_child(scroll)
+
+
+## "shielded - periodic invulnerability windows / frenzied - faster, ..." straight
+## off the one affix table: a hand-written list here would be the third copy.
+func _affix_text() -> String:
+	var parts: Array[String] = []
+	for key: String in EnemyBase.AFFIXES:
+		parts.append("%s - %s" % [key, String((EnemyBase.AFFIXES[key] as Dictionary).get("blurb", ""))])
+	return "  /  ".join(parts)
+
+
+## The portrait: the enemy's own generated art (enemy_base.tscn draws its body as
+## a Polygon2D), rendered into a small texture at runtime. One autoload-free helper
+## -- no art files, and a new enemy is instantly correct instead of a missing icon.
+func _beast_icon(scene_path: String) -> Control:
+	var out := TextureRect.new()
+	out.name = "Icon"
+	out.custom_minimum_size = Vector2(BEAST_ICON, BEAST_ICON)
+	out.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	out.texture = beast_texture(scene_path)
+	return out
+
+
+## Public so the self-test can measure a portrait without the pause menu.
+## ponytail: a tiny SubViewport per row, built once at _ready. A real art drop
+## (scenes/bestiary/<id>.png) can replace this by returning it here first.
+func beast_texture(scene_path: String) -> Texture2D:
+	if not ResourceLoader.exists(scene_path):
+		return null
+	var scene: PackedScene = load(scene_path) as PackedScene
+	if scene == null:
+		return null
+	var body_poly: Polygon2D = null
+	var inst: Node = scene.instantiate()
+	for child: Node in inst.find_children("*", "Polygon2D", true, false):
+		body_poly = child as Polygon2D
+		break
+	if body_poly == null:
+		inst.free()
+		return null
+	var points: PackedVector2Array = body_poly.polygon
+	# The body's own box. A body polygon is authored around its own origin, but an
+	# asymmetric one is not centred ON it -- so both the size and the offset come
+	# from the box, not from the origin.
+	var box := Rect2(points[0], Vector2.ZERO)
+	for p: Vector2 in points:
+		box = box.expand(p)
+	var half: Vector2 = box.size * 0.5
+	var vp := SubViewport.new()
+	vp.size = Vector2i(BEAST_ICON, BEAST_ICON)
+	vp.transparent_bg = true
+	vp.render_target_update_mode = SubViewport.UPDATE_ONCE
+	vp.disable_3d = true
+	var canvas := Node2D.new()
+	# CENTRE the drawing, or the shape's centre lands on the viewport's top-left
+	# corner and three quarters of it fall outside the tile -- the "portraits look
+	# cut off" report. The 1.25 leaves a margin, so the art fills ~80% of the tile.
+	var scale_factor: float = float(BEAST_ICON) * 0.5 / (maxf(maxf(half.x, half.y), 0.001) * 1.25)
+	canvas.position = Vector2(BEAST_ICON, BEAST_ICON) * 0.5 - Vector2(box.get_center()) * scale_factor
+	var scaled := Polygon2D.new()
+	scaled.polygon = body_poly.polygon
+	scaled.color = body_poly.color
+	scaled.scale = Vector2.ONE * scale_factor
+	canvas.add_child(scaled)
+	vp.add_child(canvas)
+	# The body's own children (a core, an eye) come along: they are what makes each
+	# silhouette recognisable rather than a same-shaped blob.
+	for child: Node in inst.find_children("*", "Polygon2D", true, false):
+		if child == body_poly:
+			continue
+		var extra := Polygon2D.new()
+		extra.polygon = (child as Polygon2D).polygon
+		extra.color = (child as Polygon2D).color
+		extra.scale = Vector2.ONE * scale_factor
+		extra.position = (child as Node2D).position * scale_factor
+		canvas.add_child(extra)
+	add_child(vp)
+	vp.render_target_update_mode = SubViewport.UPDATE_ONCE
+	inst.free()
+	return vp.get_texture()
+
+
+## Just the count line and the seen/unseen styling: the tab's text is static
+## reference data, so the rows never change -- only whether you have MET each one.
+## Runs on build and on every open().
+func refresh_bestiary() -> void:
+	if _bestiary_page == null:
+		return
+	var seen: Dictionary = Beasts.seen_ids()
+	_set_stat("seen", "%d / %d" % [seen.size(), Beasts.DEFS.size()])
+	for group_key: String in Beasts.groups():
+		var tiles: Node = _bestiary_page.get_node_or_null("Tiles_" + (group_key if group_key != "" else "normal"))
+		if tiles == null:
+			continue
+		for line: Node in tiles.get_children():
+			var met: bool = seen.has(String(line.name))
+			for cell_name: String in ["Icon", "Name", "Hint"]:
+				var cell: CanvasItem = line.get_node_or_null(cell_name) as CanvasItem
+				if cell != null:
+					cell.modulate = Color.WHITE if met else UNMET_MODULATE
+			# An unmet enemy keeps its portrait and its name and hides only what
+			# you would have to fight it to learn.
+			var hint: Label = line.get_node_or_null("Hint") as Label
+			if hint != null:
+				hint.visible = met
+
+
 func open(run: Dictionary = {}) -> void:
 	show()
 	# Always open on the menu tab: Escape should land on the same controls every
@@ -278,6 +522,7 @@ func open(run: Dictionary = {}) -> void:
 	refresh_unlockables()
 	refresh_stats(run)
 	refresh_perks()
+	refresh_bestiary()
 	_resume_btn.grab_focus()
 
 
@@ -292,6 +537,16 @@ func sync_audio_sliders() -> void:
 ## -- including the screenshot mode -- can land on a specific tab.
 func show_tab(index: int) -> void:
 	_tabs.current_tab = clampi(index, 0, maxi(_tabs.get_tab_count() - 1, 0))
+
+
+## Select a tab by TITLE. Indices are not stable: the STATS tab is only added
+## while `run_stats` is earned, so every later index shifts by one at that moment
+## -- anything that names a tab must name it, never its position.
+func show_tab_named(title: String) -> void:
+	for i: int in _tabs.get_tab_count():
+		if _tabs.get_tab_title(i) == title:
+			show_tab(i)
+			return
 
 
 func _unhandled_input(event: InputEvent) -> void:
