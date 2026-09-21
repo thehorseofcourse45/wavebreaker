@@ -19,6 +19,9 @@ signal mutators_changed(glass_cannon: bool, boss_rush: bool, fog: bool,
 ## The run's weapon archetype (weapons.gd): the menu owns the preference and
 ## announces it; Main applies it to the player and re-seeds it on boot.
 signal weapon_changed(id: String)
+## The DAILY run option (seeds the run to today's date). A separate signal from the
+## mutator bundle because it is not a mutator -- Main stores it on its own.
+signal daily_seed_toggled(enabled: bool)
 
 const Storage := preload("res://scripts/storage.gd")
 ## A second click inside this window is the confirmation that wipes the records.
@@ -36,6 +39,7 @@ const RESET_CONFIRM_WINDOW := 4.0
 @onready var _fog_check: CheckButton = $Center/Card/Margin/Column/Mutators/FogCheck
 @onready var _elite_check: CheckButton = $Center/Card/Margin/Column/Mutators/EliteCheck
 @onready var _no_shop_check: CheckButton = $Center/Card/Margin/Column/Mutators/NoShopCheck
+@onready var _daily_check: CheckButton = $Center/Card/Margin/Column/Mutators/DailyCheck
 @onready var _music_slider: HSlider = $Center/Card/Margin/Column/Audio/MusicRow/MusicSlider
 @onready var _sfx_slider: HSlider = $Center/Card/Margin/Column/Audio/SfxRow/SfxSlider
 @onready var _reset_button: Button = $Center/Card/Margin/Column/ResetButton
@@ -79,6 +83,8 @@ func _ready() -> void:
 	_fog_check.toggled.connect(_on_mutator_toggled)
 	_elite_check.toggled.connect(_on_mutator_toggled)
 	_no_shop_check.toggled.connect(_on_mutator_toggled)
+	_daily_check.set_pressed_no_signal(bool(Storage.get_value("daily_seed", false)))
+	_daily_check.toggled.connect(_on_daily_toggled)
 	# Sliders write straight through to AudioManager, which owns the save key.
 	_music_slider.value_changed.connect(AudioManager.set_music_volume)
 	_sfx_slider.value_changed.connect(AudioManager.set_sfx_volume)
@@ -249,6 +255,20 @@ func _on_mutator_toggled(_pressed: bool) -> void:
 	mutators_changed.emit(_glass_check.button_pressed, _boss_check.button_pressed,
 			_fog_check.button_pressed, _elite_check.button_pressed,
 			_no_shop_check.button_pressed)
+
+
+## Reflect the saved DAILY preference (Main calls this on menu entry).
+## set_pressed_no_signal: showing a saved value must not re-write it, same rule as
+## ENDLESS and the mutators.
+func set_daily(enabled: bool) -> void:
+	_daily_check.set_pressed_no_signal(enabled)
+
+
+## The menu owns this preference (it is the only writer), so the toggle writes the
+## save itself and tells Main, exactly like ENDLESS and DIFFICULTY.
+func _on_daily_toggled(enabled: bool) -> void:
+	Storage.set_value("daily_seed", enabled)
+	daily_seed_toggled.emit(enabled)
 
 
 # ------------------------------------------------------------------ reset ---

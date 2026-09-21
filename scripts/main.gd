@@ -75,6 +75,9 @@ var _boss_rush: bool = false
 var _fog: bool = false
 var _elite_storm: bool = false
 var _no_shop: bool = false
+## The DAILY toggle (a menu run option): pins the wave RNG to today's date, so
+## every run today deals the same waves and a run is reproducible. Off = random.
+var _daily_seed: bool = false
 ## The run's weapon archetype (weapons.gd). The menu owns the preference, Main
 ## only seeds it from disk and forwards it to the player at run start.
 var _weapon: String = "rifle"
@@ -110,6 +113,10 @@ func _bind_world() -> void:
 	# screen as a corpse. Guarded because _bind_world runs on every bind.
 	if not _enemy_container.child_entered_tree.is_connected(_watch_enemy):
 		_enemy_container.child_entered_tree.connect(_watch_enemy)
+	# The adaptive director samples the player itself (health + the fight clock),
+	# so it needs the live instance -- and the run owns which instance that is,
+	# exactly like the container above (this runs again after an arena swap).
+	_waves.bind_player(_player)
 
 
 func _ready() -> void:
@@ -370,6 +377,11 @@ func start_game() -> void:
 	_run_time = 0.0
 	_second_wind_used = false
 	BulletPool.damage_dealt = 0   # the STATS tab's DPS column is per run
+	# Crit / homing / ricochet / explosive are shop rows that mutate the POOL, which
+	# outlives a run: restore them before the shop can modify them again.
+	BulletPool.reset_run_config()
+	# Pin the wave RNG for a DAILY run (no-op on an ordinary one).
+	_apply_run_seed()
 	# The weapon archetype is a BASE loadout, applied BEFORE the perks and the
 	# mutators below so both scale the weapon's own numbers instead of cancelling
 	# them (Perks reads _base_bullet_damage, which apply_weapon re-derives).
@@ -411,6 +423,9 @@ func start_game() -> void:
 	_hud.visible = true
 	_menu.visible = false
 	_game_over.visible = false
+	# The initial arena is index 0 (no hazard), but install through the same door as
+	# every swap so the rule has one owner.
+	_install_hazard($World, _arena_index, true)
 	print("[Main] Game started.")
 	AudioManager.start_music()
 	_waves.start_game()
@@ -428,6 +443,7 @@ func _enter_menu() -> void:
 	_fog = bool(Storage.get_value("fog", false))
 	_elite_storm = bool(Storage.get_value("elite_storm", false))
 	_no_shop = bool(Storage.get_value("no_shop", false))
+	_daily_seed = bool(Storage.get_value("daily_seed", false))
 	# The weapon archetype is a preference too: seeded here so a scene reload, a
 	# return to the menu and a RESET SAVE all keep showing the picked gun.
 	_weapon = String(Weapons.resolve(String(Storage.get_value(Weapons.SAVE_KEY, Weapons.DEFAULT_ID))).id)
@@ -443,6 +459,7 @@ func _enter_menu() -> void:
 	_menu.set_difficulty(_waves.difficulty)
 	_menu.set_weapon(_weapon)
 	_menu.refresh_run_options(_glass_cannon, _boss_rush, _fog, _elite_storm, _no_shop)
+	_menu.set_daily(_daily_seed)
 	_menu.sync_audio_sliders()   # the pause menu moves the same volumes
 	_menu.refresh_stats()   # a record set this session shows up without a restart
 	_shop.hide_shop()
@@ -480,6 +497,28 @@ func _on_mutators_changed(glass_cannon: bool, boss_rush: bool, fog: bool,
 func _on_weapon_changed(id: String) -> void:
 	_weapon = String(Weapons.resolve(id).id)
 	_player.apply_weapon(_weapon)
+
+
+## The menu owns the DAILY preference (it writes the save and announces the change);
+## Main only forwards it, like ENDLESS. It applies at the next run start.
+func _on_daily_seed_toggled(enabled: bool) -> void:
+	_daily_seed = enabled
+
+
+## Pin this run's wave RNG. DAILY seeds it to today's date, so every player gets the
+## same wave order that day and a run is reproducible; off = randomize.
+func _apply_run_seed() -> void:
+	var value: int = _today_seed() if _daily_seed else 0
+	_waves.seed_run(value)
+	if value != 0:
+		print("[Main] DAILY seed: %d" % value)
+
+
+## Today's date as an int seed (UTC, so the daily boundary is the same for
+## everyone). yyyymmdd: readable in a log and unique per calendar day.
+static func _today_seed() -> int:
+	var d: Dictionary = Time.get_datetime_dict_from_system(true)
+	return int(d.get("year", 0)) * 10000 + int(d.get("month", 0)) * 100 + int(d.get("day", 0))
 
 
 func _on_player_died() -> void:
@@ -604,6 +643,7 @@ func _wire_signals() -> void:
 	_menu.difficulty_changed.connect(_on_difficulty_changed)
 	_menu.mutators_changed.connect(_on_mutators_changed)
 	_menu.weapon_changed.connect(_on_weapon_changed)
+	_menu.daily_seed_toggled.connect(_on_daily_seed_toggled)
 	_game_over.restart_pressed.connect(_restart)
 	# Pause menu.
 	_pause_menu.resume_pressed.connect(_on_pause_resume)
@@ -730,7 +770,13 @@ func _on_player_damaged(_amount: int) -> void:
 
 func _on_wave_started(wave_number: int) -> void:
 	_hud.set_wave(wave_number)
-	_banner.show_banner("WAVE %d" % wave_number)
+	# The director's verdict on the LAST wave rides this wave's banner: a bias the
+	# player cannot see is a bias the player cannot learn from.
+	var label: String = "WAVE %d" % wave_number
+	var note: String = _waves.pressure_label()
+	if note != "":
+		label += " - " + note
+	_banner.show_banner(label)
 	# Boss waves get their own bed; every other wave (re)asserts the normal one,
 	# so leaving a boss wave never leaves the boss track playing.
 	if _waves.is_boss_wave(wave_number):
@@ -806,11 +852,21 @@ func _advance_arena() -> void:
 			return
 
 
+## Give the freshly built arena its hazard, if its index has one. Kept here (not in
+## the arena scene) so an arena stays a pure layout and the hazard table lives in one
+## place, next to ARENA_SCENES above.
+func _install_hazard(arena_root: Node, index: int, arm: bool) -> void:
+	var hazard: ArenaHazard = ArenaHazard.install(arena_root as Node2D, index)
+	if hazard != null:
+		hazard.live = arm
+		print("[Main] Arena %d hazard: %s%s" % [index + 1, hazard.kind, "" if arm else " (disarmed)"])
+
+
 ## Replace the whole World node under a running game. The Player node is CARRIED
 ## OVER (health, upgrades, i-frames and its PlayerCamera all live on it), so the
 ## signals wired in _wire_signals stay connected; everything else in the old
 ## arena -- enemies, obstacles, its nav region -- is freed with it.
-func _switch_arena(index: int) -> void:
+func _switch_arena(index: int, arm_hazard: bool = true) -> void:
 	if index < 0 or index >= ARENA_SCENES.size() or index == _arena_index:
 		return
 	# A gated arena stays shut: the index is legal but the unlockable is not earned
@@ -841,6 +897,7 @@ func _switch_arena(index: int) -> void:
 	PickupPool.reset()          # or pickups bobbing where the old arena was
 	_waves.rebind_container()
 	_waves.enter_hard_arena()
+	_install_hazard(fresh, index, arm_hazard)
 	_player.global_position = Vector2.ZERO   # deliberate: no free full heal here
 	_player.velocity = Vector2.ZERO
 	_banner.show_banner("ARENA %d" % (index + 1))

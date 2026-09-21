@@ -33,6 +33,20 @@ then upgrades on top of.
 | `FURNACE` | Short-range cone of short-lived rounds |
 | `SLUGGER` | Slow hand cannon, pierces one, shoves hard |
 
+## The adaptive director
+
+Waves react to how you are actually doing. After every wave the director reads
+that wave -- the worst your health got, and how long the pack took to clear --
+and biases the next one. Come through untouched and the roster grows (about 25%
+heavier, plus a couple of elites) while spawns press in 15% faster; get chewed up
+and it thins out and eases off. The wave banner says which way it went
+(`PRESSURE RISING` / `EASING OFF`), and `[Wave] ...` in the log carries the
+pressure number.
+
+It biases the authored table, it never replaces it: the first wave of a run is
+exactly as authored, and boss waves are exempt -- their escort is deliberately
+trimmed because the boss *is* the wave.
+
 ## Run from source
 
 Requires [Godot 4.7](https://godotengine.org/download) (the project uses the

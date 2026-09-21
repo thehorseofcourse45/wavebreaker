@@ -81,6 +81,17 @@ const AFFIXES: Dictionary = {
 	"vampiric": {"tint": Color(0.9, 0.15, 0.28), "heal": 8},
 	"warded": {"tint": Color(1.0, 0.85, 0.4), "time": 0.35},
 }
+
+## Non-colour affix cue (accessibility). The affix TINT alone is invisible to a
+## colourblind player, so every affixed enemy also carries a short ASCII tag above
+## its body. Letters, not a glyph: the project ships no custom font, so a symbol
+## like "\u25c8" could render as a missing-glyph box. Kept separate from AFFIXES so
+## the modifier table stays "a tint plus its hooks".
+const AFFIX_MARKS: Dictionary = {
+	"shielded": "SH", "frenzied": "FR", "volatile": "VO", "regenerating": "RG",
+	"teleporting": "TP", "reflective": "RF", "splitting": "SP", "vampiric": "VP",
+	"warded": "WD",
+}
 const VOLATILE_RADIUS := 95.0
 const VOLATILE_DAMAGE := 12
 ## Radius used to probe "would this teleport land inside a wall?".
@@ -203,6 +214,27 @@ func _apply_affix() -> void:
 			_base_color = def["tint"]
 		"warded":
 			_base_color = def["tint"]
+	_build_affix_mark()
+
+
+## A short, colourblind-readable tag above the body naming the affix. It keeps
+## its own affix-coloured text while the body flashes white on a hit, so "which
+## modifier is this" never depends on catching a moving colour.
+func _build_affix_mark() -> void:
+	if not AFFIX_MARKS.has(affix):
+		return
+	var mark := Label.new()
+	mark.name = "AffixMark"
+	mark.text = String(AFFIX_MARKS[affix])
+	mark.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	mark.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	mark.add_theme_font_size_override("font_size", 12)
+	mark.add_theme_color_override("font_color", AFFIXES[affix]["tint"])
+	mark.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.9))
+	mark.add_theme_constant_override("outline_size", 4)
+	mark.position = Vector2(-20.0, -34.0)
+	mark.size = Vector2(40.0, 14.0)
+	add_child(mark)
 
 
 ## Per-frame affix upkeep. Called from _physics_process only while alive and

@@ -3,7 +3,9 @@ class_name UpgradeSystem
 ## Flat registry of shop upgrades: keys, labels, base cost, apply step.
 ## No scene, no autoload -- instantiated by Main and read by the shop UI.
 ## Stats live on the player's exports, or on BulletPool for pooled bullet config;
-## upgrades mutate those so the HUD/next wave sees fresh numbers.
+## upgrades mutate those so the HUD/next wave sees fresh numbers. The BEHAVIOR rows
+## (crit / homing / ricochet / explosive) write to BulletPool, which Main restores
+## per run via BulletPool.reset_run_config().
 
 signal upgraded(id: String, new_value)
 
@@ -31,6 +33,16 @@ const DEFS: Array[Dictionary] = [
 	{"id": "recoil",    "label": "Recoil -25%",        "base_cost": 60,  "max_level": 3, "rarity": "common"},
 	{"id": "pierce",    "label": "Pierce +1 enemy",    "base_cost": 200, "max_level": 2, "rarity": "rare"},
 	{"id": "charge",    "label": "Charge shot (RMB)",  "base_cost": 340, "max_level": 1, "rarity": "epic"},
+	# Behavior rows: they reshape rounds instead of scaling a number, and they write
+	# to BulletPool (see Main's per-run reset). crit_chance/crit_damage feed the crit
+	# system that already exists on the pool; the rest drive bullet.gd's homing,
+	# ricochet and kill-blast. Probe-pinned magnitudes are left "common" earlier --
+	# these are new rows, so a rarity bump here is the intended balance lever.
+	{"id": "crit_chance", "label": "Crit +6%",          "base_cost": 130, "max_level": 4, "rarity": "rare"},
+	{"id": "crit_damage", "label": "Crit dmg +30%",     "base_cost": 150, "max_level": 3, "rarity": "rare"},
+	{"id": "homing",      "label": "Homing rounds",     "base_cost": 220, "max_level": 2, "rarity": "epic"},
+	{"id": "ricochet",    "label": "Ricochet +1",       "base_cost": 180, "max_level": 2, "rarity": "rare"},
+	{"id": "explosive",   "label": "Explosive rounds",  "base_cost": 240, "max_level": 2, "rarity": "epic"},
 	# The one HEALING row: the "no shop" mutator keeps exactly this one open, so a
 	# run with it can still buy health and nothing else.
 	{"id": "repair",    "label": "Field repair (full)", "base_cost": 140, "max_level": 1, "rarity": "common"},
@@ -128,6 +140,15 @@ func buy(id: String, credits: int, player: Player) -> Dictionary:
 		"leech":      player.kill_heal += int(round(1.0 * m))
 		"recoil":     player.fire_recoil *= maxf(0.1, 1.0 - 0.25 * m)
 		"pierce":     player.pierce_count += int(round(1.0 * m))
+		# Behavior rows: mutate the POOL (shared by every player round), which is why
+		# Main calls BulletPool.reset_run_config() at run start.
+		"crit_chance": BulletPool.crit_chance = minf(0.85, BulletPool.crit_chance + 0.06 * m)
+		"crit_damage": BulletPool.crit_multiplier += 0.30 * m
+		"homing":      BulletPool.homing_strength = minf(9.0, BulletPool.homing_strength + 3.0 * m)
+		"ricochet":    BulletPool.bounce_count += int(round(1.0 * m))
+		"explosive":
+			BulletPool.explosive_radius = minf(150.0, BulletPool.explosive_radius + 46.0 * m)
+			BulletPool.explosive_damage += int(round(8.0 * m))
 		"charge":     player.charge_unlocked = true
 		"repair":     player.heal(player.max_health)
 	upgraded.emit(id, levels[id])

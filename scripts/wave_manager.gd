@@ -30,6 +30,25 @@ signal game_over
 @export var intermission_time: float = 3.0
 @export var max_alive: int = 20
 
+@export_group("Adaptive director")
+## The director reads how the LAST wave actually went -- how hard the player was
+## hit and how long the pack took to clear -- and biases the next one: cruising
+## gets a heavier, faster roster, bleeding gets a lighter, slower one. It is a
+## bias on the authored table, never a replacement: pressure 0 (the first wave,
+## or an even fight) reproduces the table exactly, and boss waves are exempt
+## (their escort is deliberately trimmed -- the boss IS the wave).
+@export var director_enabled: bool = true
+## Roster weight at full pressure: every count in the composition moves +-25%.
+@export var director_swing: float = 0.25
+## Extra elites at full pressure. Bleeding adds none, so the swing is symmetric
+## in feel even though elites can only ever be added, not removed.
+@export var director_elite_bonus: int = 2
+## Spawn-interval swing at full pressure: a cruising player is pressed faster.
+@export var director_pace_swing: float = 0.15
+## Seconds per queued enemy that counts as an even fight, for the pace term. A
+## roster cleared faster than this is slack the director spends.
+@export var director_pace_ref: float = 0.55
+
 @export_group("Spawn telegraph")
 ## Enemies announce their arrival with an expanding ring at the spawn point,
 ## then materialise. Set to 0 to spawn instantly.
@@ -142,6 +161,24 @@ var is_running: bool = false
 var shop_pause_enabled: bool = false  # Main picks up wave_cleared and pauses here
 var hard_arena: bool = false          # set by Main after the arena swap
 
+## The run's random source. Every wave-level draw routes through it -- queue
+## shuffle, spawn jitter, affix roll -- so one seed reproduces a whole run. Main
+## pins it for a DAILY run (see seed_run); otherwise it is just random. The global
+## RNG is left alone: only the wave loop needs to be reproducible.
+var rng := RandomNumberGenerator.new()
+
+## The director's read of the last completed wave: +1 cruising, -1 bleeding, 0
+## while there is nothing to read (wave 1) or the wave was an even fight.
+var pressure: float = 0.0
+var _player: Player = null
+var _hp_ratio: float = 1.0        # live, sampled every frame while a wave runs
+var _hp_start: float = 1.0        # when this wave began (i.e. after the shop)
+var _worst_hp_ratio: float = 1.0  # this wave's low point
+var _wave_seconds: float = 0.0    # fight clock for the wave in progress
+var _last_wave_seconds: float = 0.0
+var _last_roster: int = 0         # enemies composed into the wave being measured
+var _director_pace: float = 1.0   # spawn-interval multiplier from the director
+
 var _spawn_queue: Array[String] = []  # type names left to spawn
 var _alive: int = 0
 var _hp_mult: float = 1.0
@@ -153,6 +190,7 @@ var _intermission_timer: Timer = null
 
 
 func _ready() -> void:
+	rng.randomize()   # a fresh RandomNumberGenerator is seeded to 0 -- make it random
 	_spawn_timer = Timer.new()
 	_spawn_timer.wait_time = spawn_interval
 	_spawn_timer.timeout.connect(_on_spawn_tick)
@@ -163,6 +201,36 @@ func _ready() -> void:
 	add_child(_intermission_timer)
 
 
+## Main hands the director the live player: the run owns which instance that is,
+## the same reason `rebind_container()` exists after an arena swap.
+func bind_player(p: Player) -> void:
+	_player = p
+
+
+## The director's sampler -- the fight clock and the player's health. Read here
+## rather than pushed from Main because the director is the only consumer, and a
+## paused tree stops _process, so ESC-pause time never counts as fight time. (The
+## shop does not pause the tree, but the clock is reset at every wave start and
+## read at every wave clear, so shop time lands outside every measurement.)
+func _process(delta: float) -> void:
+	if not is_running:
+		return
+	_wave_seconds += delta
+	if _player == null or not is_instance_valid(_player) or _player.max_health <= 0:
+		return
+	_hp_ratio = clampf(float(_player.health) / float(_player.max_health), 0.0, 1.0)
+	_worst_hp_ratio = minf(_worst_hp_ratio, _hp_ratio)
+
+
+## Pin the run's RNG. 0 = randomize (an ordinary run); any other value reproduces
+## a whole run. Main passes today's date for a DAILY run, before start_game().
+func seed_run(value: int) -> void:
+	if value == 0:
+		rng.randomize()
+	else:
+		rng.seed = value
+
+
 func start_game() -> void:
 	_enemy_container = get_tree().get_first_node_in_group("enemy_container") as Node2D
 	if _enemy_container == null:
@@ -171,6 +239,16 @@ func start_game() -> void:
 	current_wave = 0
 	_spawn_queue.clear()
 	_alive = 0
+	# A fresh run carries no verdict: the last run's pressure must never bias
+	# wave 1 of this one, and the wave clock starts at the first wave start.
+	pressure = 0.0
+	_wave_seconds = 0.0
+	_last_wave_seconds = 0.0
+	_last_roster = 0
+	_director_pace = 1.0
+	_hp_ratio = 1.0
+	_hp_start = 1.0
+	_worst_hp_ratio = 1.0
 	is_running = true
 	_begin_intermission(intermission_time * 0.5)
 
@@ -218,7 +296,22 @@ func _on_intermission_done() -> void:
 
 func _start_wave(wave_number: int) -> void:
 	current_wave = wave_number
-	var comp: Dictionary = _composition_for_wave(wave_number)
+	# The director's read of the wave that just ENDED, taken before any of this
+	# one exists. Wave 1 -- and a fresh run -- has nothing to read: pressure stays
+	# 0 and the authored table is reproduced exactly.
+	pressure = 0.0
+	if _last_wave_seconds > 0.0:
+		pressure = pressure_from(_hp_start, _worst_hp_ratio, _last_wave_seconds,
+				director_pace_ref, _last_roster)
+	# A COPY: an authored row is a live reference into `wave_table`, so writing the
+	# director's bias into it would compound run after run -- wave 6 would come out
+	# heavier every time it was played, and nothing would ever error.
+	var comp: Dictionary = _composition_for_wave(wave_number).duplicate()
+	_apply_director(comp, wave_number)
+	# This wave's baseline for the next reading.
+	_hp_start = _hp_ratio
+	_worst_hp_ratio = _hp_ratio
+	_wave_seconds = 0.0
 	_hp_mult = float(comp.get("hp_mult", 1.0))
 	_speed_mult = float(comp.get("speed_mult", 1.0))
 	if hard_arena:
@@ -227,7 +320,7 @@ func _start_wave(wave_number: int) -> void:
 	var diff: Dictionary = DIFFICULTIES.get(difficulty, DIFFICULTIES["normal"])
 	_hp_mult *= float(diff["hp"])
 	_speed_mult *= float(diff["speed"])
-	_spawn_timer.wait_time = spawn_interval * float(diff["spawn"])
+	_spawn_timer.wait_time = spawn_interval * float(diff["spawn"]) * _director_pace
 	_spawn_queue.clear()
 	for spec: Array in [["chaser", "chaser"], ["rusher", "rusher"], ["tank", "tank"],
 			["weaver", "weaver"], ["orbiter", "orbiter"], ["shooter", "shooter"],
@@ -237,14 +330,17 @@ func _start_wave(wave_number: int) -> void:
 			["rammer", "rammer"]]:
 		for i: int in int(comp.get(spec[0], 0)):
 			_spawn_queue.append(String(spec[1]))
-	_spawn_queue.shuffle()
+	_shuffle_queue()
+	# What the pace term will measure. A boss wave reports 0: the clock belongs to
+	# the boss, not to its escort.
+	_last_roster = 0 if is_boss_wave(wave_number) else _spawn_queue.size()
 	if is_boss_wave(wave_number):
 		# Bosses walk in TOGETHER: spawn them now rather than trickling them in
 		# behind the escort, so both telegraphs start on the same frame.
 		_spawn_queue = _spawn_queue.filter(func(entry: String) -> bool: return entry != "boss")
 		for i: int in boss_count_for_wave(wave_number):
 			_spawn_enemy("boss")
-	print("[Wave] WAVE %d -- queued: %s (hp x%.2f, speed x%.2f)" % [wave_number, str(_spawn_queue), _hp_mult, _speed_mult])
+	print("[Wave] WAVE %d -- queued: %s (hp x%.2f, speed x%.2f, pressure %+.2f)" % [wave_number, str(_spawn_queue), _hp_mult, _speed_mult, pressure])
 	wave_started.emit(wave_number)
 	progress_changed.emit(enemies_remaining())
 	_spawn_timer.start()
@@ -291,10 +387,53 @@ func rebind_container() -> void:
 ## One affix id for this spawn, or "" for none.
 func _roll_affix(wave_number: int) -> String:
 	var chance: float = minf(affix_chance + float(maxi(wave_number - 1, 0)) * affix_growth, affix_chance_max)
-	if not force_affixes and randf() >= chance:
+	if not force_affixes and rng.randf() >= chance:
 		return ""
 	var keys: Array = EnemyBase.AFFIXES.keys()
-	return String(keys[randi() % keys.size()])
+	return String(keys[rng.randi_range(0, keys.size() - 1)])
+
+
+## Pressure from one completed wave's numbers, in [-1, 1]: +1 untouched and fast,
+## -1 bled dry and slow, 0 an even fight. Health is the heavier term -- a fast
+## clock can just mean a good route, but coming through untouched cannot be
+## faked. Static and pure so the suite can pin it without a live run.
+static func pressure_from(start_hp: float, worst_hp: float, seconds: float,
+		pace_ref: float, roster: int) -> float:
+	var health: float = clampf((start_hp + worst_hp) * 0.5, 0.0, 1.0)
+	var health_term: float = clampf(health * 2.0 - 1.0, -1.0, 1.0)
+	# A boss wave reports roster 0: its clock belongs to the boss, so pace is not
+	# read at all rather than read wrong.
+	var pace_term: float = 0.0
+	if roster >= 2:
+		var expect: float = maxf(pace_ref * float(roster), 0.001)
+		pace_term = clampf((expect - seconds) / expect, -1.0, 1.0)
+	return clampf(health_term * 0.65 + pace_term * 0.35, -1.0, 1.0)
+
+
+## What the wave banner should say about the director, or "" when the last wave
+## read as even. The threshold lives here so Main only has to render it.
+func pressure_label() -> String:
+	if absf(pressure) < 0.35:
+		return ""
+	return "PRESSURE RISING" if pressure > 0.0 else "EASING OFF"
+
+
+## Bias one composed roster by the pressure the last wave showed. Composition and
+## pace only: the hp/speed multipliers belong to the difficulty row (and nudging
+## them would drift the boss-TTK measurement the suite pins), and the boss count
+## is the boss rule's business.
+func _apply_director(comp: Dictionary, wave_number: int) -> void:
+	_director_pace = 1.0
+	if not director_enabled or is_boss_wave(wave_number) or absf(pressure) < 0.01:
+		return
+	var scale: float = 1.0 + director_swing * pressure
+	for key: String in comp.keys():
+		if key == "hp_mult" or key == "speed_mult" or key == "boss":
+			continue
+		comp[key] = maxi(0, int(round(float(comp[key]) * scale)))
+	comp["elite"] = maxi(0, int(comp.get("elite", 0))
+			+ int(round(float(director_elite_bonus) * maxf(pressure, 0.0))))
+	_director_pace = clampf(1.0 - director_pace_swing * pressure, 0.5, 1.5)
 
 
 func _composition_for_wave(wave_number: int) -> Dictionary:
@@ -453,17 +592,31 @@ func _pick_spawn_position() -> Vector2:
 	if points.is_empty():
 		push_warning("WaveManager: no spawn points found; spawning at origin.")
 		return Vector2.ZERO
-	var chosen: Node2D = points[randi() % points.size()] as Node2D
+	var chosen: Node2D = points[rng.randi_range(0, points.size() - 1)] as Node2D
 	var pos: Vector2 = chosen.global_position
 	# Jitter so simultaneous spawns don't stack exactly.
-	pos += Vector2(randf_range(-24.0, 24.0), randf_range(-24.0, 24.0))
+	pos += Vector2(rng.randf_range(-24.0, 24.0), rng.randf_range(-24.0, 24.0))
 	return pos
+
+
+## Fisher-Yates on the spawn queue using THIS run's rng. Array.shuffle() draws from
+## the global RNG, which a seeded run must not depend on -- two runs with the same
+## seed have to deal the same queue.
+func _shuffle_queue() -> void:
+	for i: int in range(_spawn_queue.size() - 1, 0, -1):
+		var j: int = rng.randi_range(0, i)
+		var tmp: String = _spawn_queue[i]
+		_spawn_queue[i] = _spawn_queue[j]
+		_spawn_queue[j] = tmp
 
 
 func _on_enemy_died(_enemy: EnemyBase) -> void:
 	_alive = maxi(_alive - 1, 0)
 	progress_changed.emit(enemies_remaining())
 	if is_running and _spawn_queue.is_empty() and _alive <= 0:
+		# The fight clock stops HERE: the director measures the wave, not the shop
+		# and intermission that follow it.
+		_last_wave_seconds = _wave_seconds
 		if not endless and current_wave >= finite_wave_count():
 			# Finite campaign: the last authored wave ends the run. Announced as
 			# game_over (NOT wave_cleared) so the shop never opens behind it.

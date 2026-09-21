@@ -107,6 +107,11 @@ theme_override_font_sizes/font_size = 16
 text = "NO SHOP"
 tooltip_text = "Credits only buy healing."
 
+[node name="DailyCheck" type="CheckButton" parent="./Center/Card/Margin/Column/Mutators"]
+theme_override_font_sizes/font_size = 16
+text = "DAILY"
+tooltip_text = "Seed the run to today's date - every run today plays the same waves."
+
 [node name="Audio" type="VBoxContainer" parent="./Center/Card/Margin/Column"]
 theme_override_constants/separation = 2
 

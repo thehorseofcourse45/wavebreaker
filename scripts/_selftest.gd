@@ -682,13 +682,25 @@ func _run(main: Node) -> void:
 	pk_enemy.position = Vector2(-420, -180)
 	wm._enemy_container.add_child(pk_enemy)
 	await main.get_tree().process_frame   # let the kill watcher arm on entry
+	# A LIVE, FULL-HEALTH player is a precondition for this whole section, and
+	# neither was pinned before: collection is a body_entered OVERLAP, and
+	# Player._die() clears the player's collision layer, so a corpse can pull a
+	# drop with the magnet and never touch it (silent, and load-dependent -- whether
+	# an earlier death probe left the player dead varies by timing). A hurt player
+	# is the second half: Main rolls a HEALTH drop 35% of the time when hurt, and
+	# this probe is about credits. Revive through the game's own path.
+	arch_player.respawn(pk_saved_pos)
+	# The chaser WANDERS between add_child and the killing blow -- further under load,
+	# because the suite's awaits stretch -- so the drop lands where it DIED, not where
+	# it was placed. Kill against that position and teleport the player THERE.
+	var pk_death_pos: Vector2 = pk_enemy.global_position
 	pk_enemy.take_damage(9999)
 	await main.get_tree().process_frame
 	if PickupPool.active_count() != pk_active0 + 1:
 		failed.append("pickups: a forced 100%% drop produced %d new pickups, expected exactly 1" % (PickupPool.active_count() - pk_active0))
 	# Walk the player onto the drop: the magnet pulls it in and the grant lands
 	# exactly once, then the pickup parks again.
-	arch_player.global_position = Vector2(-420, -180)
+	arch_player.global_position = pk_death_pos
 	var pk_frames := 0
 	while pk_events.is_empty() and pk_frames < 60:
 		await main.get_tree().physics_frame
@@ -1098,11 +1110,17 @@ func _run(main: Node) -> void:
 	for sweep_def: Dictionary in up_sweep.DEFS:
 		var sweep_id: String = String(sweep_def.id)
 		var sweep_before: Dictionary = _player_stat_snapshot(shop_player)
+		var sweep_pool_before: Dictionary = _pool_stat_snapshot()
 		var sweep_res: Dictionary = up_sweep.buy(sweep_id, 999999, shop_player)
 		if not bool(sweep_res.ok):
 			failed.append("shop: DEFS row '%s' could not be bought" % sweep_id)
-		elif _player_stat_snapshot(shop_player) == sweep_before:
+		elif _player_stat_snapshot(shop_player) == sweep_before \
+				and _pool_stat_snapshot() == sweep_pool_before:
 			failed.append("shop: DEFS row '%s' was bought but moved no stat" % sweep_id)
+	# The sweep bought the pool-backed rows (crit / homing / ricochet / explosive),
+	# which mutate the SHARED pool: put it back, or a later probe measures a
+	# crit / behavior build it never asked for.
+	BulletPool.reset_run_config()
 	up_sweep.queue_free()
 	up_shop.queue_free()
 	BulletPool.reset()
@@ -1590,7 +1608,7 @@ func _run(main: Node) -> void:
 	var world_before: Node = main.get_node("World")
 	var spawn_count_before: int = main.get_tree().get_nodes_in_group("spawn_points").size()
 	var player_hp_before: int = carried_player.health
-	main._switch_arena(1)
+	main._switch_arena(1, false)   # not a live run: leave the hazard disarmed
 	await main.get_tree().physics_frame
 	var world_after: Node = main.get_node_or_null("World")
 	if world_after == null or world_after == world_before:
@@ -2441,11 +2459,11 @@ func _run(main: Node) -> void:
 			failed.append("unlockables: the arena 3 scene is missing (%s)" % vault_scene)
 		_set_unlock_flags({})
 		var arena_was: int = main._arena_index
-		main._switch_arena(2)
+		main._switch_arena(2, false)
 		if main._arena_index != arena_was:
 			failed.append("unlockables: the vault opened while still locked")
 		_set_unlock_flags({"vault_arena": true})
-		main._switch_arena(2)
+		main._switch_arena(2, false)
 		if main._arena_index != 2:
 			failed.append("unlockables: the vault did not open after being earned")
 		var vault_world: Node = main.get_node("World")
@@ -2730,7 +2748,7 @@ func _run(main: Node) -> void:
 		if not ResourceLoader.exists(nexus_scene):
 			failed.append("arena coverage: the fourth arena scene is missing (%s)" % nexus_scene)
 		_set_unlock_flags({})
-		main._switch_arena(3)
+		main._switch_arena(3, false)
 		if main._arena_index != 3:
 			failed.append("arena coverage: arena 4 did not swap in (index %d)" % main._arena_index)
 		var nexus_world: Node2D = main.get_node("World") as Node2D
@@ -2768,7 +2786,7 @@ func _run(main: Node) -> void:
 				failed.append("arena coverage: arena %d scene is missing (%s)" % [extra_index + 1, extra_scene])
 				continue
 			_set_unlock_flags({})
-			main._switch_arena(extra_index)
+			main._switch_arena(extra_index, false)
 			if main._arena_index != extra_index:
 				failed.append("arena coverage: arena %d did not swap in (index %d)" % [extra_index + 1, main._arena_index])
 				continue
@@ -3005,6 +3023,286 @@ func _run(main: Node) -> void:
 	wp_ref.free()
 	wp.free()
 
+	# -- Adaptive director: pressure in, next wave's roster out ------------------
+	# The director is one pure function plus one bias applied at wave start. The
+	# failure it must not have is COMPOUNDING: an authored row in `wave_table` is a
+	# live reference, so biasing it in place makes wave 5 heavier every playthrough
+	# and nothing ever errors. The probes below therefore drive whole waves and
+	# compare against a fresh read of the table.
+	var dr_table: Array[Dictionary] = wm.wave_table
+	var dr_wave: int = 5
+	# Snapshot the authored row BEFORE any director call. The table itself is what
+	# the compounding bug corrupts, so a later read of it would compare the damage
+	# with itself -- the probe would pass on exactly the bug it exists to catch.
+	var dr_authored_row: Dictionary = dr_table[dr_wave - 1].duplicate()
+	var dr_authored: int = 0
+	for dr_key: String in dr_authored_row.keys():
+		if dr_key != "hp_mult" and dr_key != "speed_mult":
+			dr_authored += int(dr_authored_row[dr_key])
+	# The pure function first: +, - and 0, clamped at both ends, and a boss wave
+	# (roster 0) reads no pace at all rather than reading its clock as slow.
+	var dr_hot: float = WaveManager.pressure_from(1.0, 1.0, 1.0, 0.55, 40)
+	var dr_cold: float = WaveManager.pressure_from(0.05, 0.05, 600.0, 0.55, 40)
+	var dr_even: float = WaveManager.pressure_from(0.5, 0.5, 0.55 * 40.0, 0.55, 40)
+	if dr_hot <= 0.3 or dr_cold >= -0.3 or absf(dr_even) > 0.01:
+		failed.append("director: untouched / bled-dry / even pressure is wrong (%.2f, %.2f, %.2f)"
+				% [dr_hot, dr_cold, dr_even])
+	if WaveManager.pressure_from(9.0, 9.0, 0.0, 0.55, 400) > 1.0 \
+			or WaveManager.pressure_from(-3.0, -3.0, 99999.0, 0.55, 400) < -1.0:
+		failed.append("director: pressure escaped [-1, 1]")
+	if absf(WaveManager.pressure_from(0.5, 0.5, 900.0, 0.55, 0)) > 0.01:
+		failed.append("director: a boss wave's clock leaked into the pace term")
+
+	# Nothing to read (wave 1 of a run): the authored table, verbatim.
+	var dr_base_wait: float = wm.spawn_interval * float(WaveManager.DIFFICULTIES[wm.difficulty]["spawn"])
+	wm.is_running = true
+	wm.pressure = 0.0
+	wm._last_wave_seconds = 0.0
+	wm._start_wave(dr_wave)
+	if wm._spawn_queue.size() != dr_authored:
+		failed.append("director: a neutral report changed the authored wave (%d, table says %d)"
+				% [wm._spawn_queue.size(), dr_authored])
+	if absf(wm._spawn_timer.wait_time - dr_base_wait) > 0.001:
+		failed.append("director: a neutral report moved the spawn pace (%.3f, baseline %.3f)"
+				% [wm._spawn_timer.wait_time, dr_base_wait])
+	wm.stop()
+
+	# Cruising: untouched and fast -- the next wave is heavier AND faster.
+	wm._hp_ratio = 1.0
+	wm._hp_start = 1.0
+	wm._worst_hp_ratio = 1.0
+	wm._last_wave_seconds = 1.0
+	wm._last_roster = 40
+	wm._start_wave(dr_wave)
+	var dr_heavy: int = wm._spawn_queue.size()
+	var dr_heavy_elites: int = wm._spawn_queue.count("elite")
+	if wm.pressure <= 0.3:
+		failed.append("director: an untouched second-long wave did not read as cruising (%.2f)" % wm.pressure)
+	if dr_heavy <= dr_authored:
+		failed.append("director: cruising did not grow the roster (%d vs %d)" % [dr_heavy, dr_authored])
+	if dr_heavy_elites <= int(dr_authored_row.get("elite", 0)):
+		failed.append("director: cruising added no elites (%d)" % dr_heavy_elites)
+	if wm._spawn_timer.wait_time >= dr_base_wait:
+		failed.append("director: cruising did not press the pace (%0.3f vs baseline %0.3f)"
+				% [wm._spawn_timer.wait_time, dr_base_wait])
+	wm.stop()
+
+	# Bleeding: 12% health and a 400 s wave -- thinner and slower.
+	wm._hp_ratio = 0.12
+	wm._hp_start = 0.12
+	wm._worst_hp_ratio = 0.1
+	wm._last_wave_seconds = 400.0
+	wm._last_roster = 40
+	wm._start_wave(dr_wave)
+	var dr_light: int = wm._spawn_queue.size()
+	if wm.pressure >= -0.3:
+		failed.append("director: a 400 s wave at 12%% health did not read as bleeding (%.2f)" % wm.pressure)
+	if dr_light >= dr_authored:
+		failed.append("director: bleeding did not thin the roster (%d vs %d)" % [dr_light, dr_authored])
+	if wm._spawn_timer.wait_time <= dr_base_wait:
+		failed.append("director: bleeding did not ease the pace (%.3f vs baseline %.3f)"
+				% [wm._spawn_timer.wait_time, dr_base_wait])
+	wm.stop()
+
+	# ...and none of that touched the authored table. This is the guard on the
+	# `.duplicate()` in _start_wave: without it the counts above grow in place and
+	# every later run inherits them.
+	wm.pressure = 0.0
+	wm._last_wave_seconds = 0.0
+	wm._start_wave(dr_wave)
+	for dr_key2: String in dr_authored_row.keys():
+		if dr_key2 == "hp_mult" or dr_key2 == "speed_mult":
+			continue
+		var dr_want: int = int(dr_authored_row[dr_key2])
+		var dr_got: int = wm._spawn_queue.count(dr_key2)
+		if dr_want != dr_got:
+			failed.append("director: wave_table[%d]['%s'] is now %d, authored %d"
+					% [dr_wave - 1, dr_key2, dr_got, dr_want])
+	wm.stop()
+
+	# Boss waves are exempt: cruising must not pad the escort (the boss IS the
+	# wave), even though the boss wave's own outcome still informs the next one.
+	# The telegraph is skipped for this one call so nothing is left waiting on a
+	# timer when the section moves on, and the bosses it spawns are freed again --
+	# they are not what this probe is measuring.
+	var dr_telegraph: float = wm.spawn_telegraph_time
+	wm.spawn_telegraph_time = 0.0
+	var dr_kids_before: Array[Node] = main._enemy_container.get_children()
+	wm._hp_start = 1.0
+	wm._worst_hp_ratio = 1.0
+	wm._last_wave_seconds = 1.0
+	wm._last_roster = 40
+	wm._start_wave(WaveManager.BOSS_EVERY)
+	if wm.pressure <= 0.3:
+		failed.append("director: a boss wave's own read was not cruising (%.2f)" % wm.pressure)
+	if wm._spawn_queue.size() != wm.boss_escort_chasers:
+		failed.append("director: the director padded a boss wave's escort (%d, expected %d)"
+				% [wm._spawn_queue.size(), wm.boss_escort_chasers])
+	for dr_node: Node in main._enemy_container.get_children():
+		if not dr_kids_before.has(dr_node):
+			dr_node.queue_free()
+	for dr_frame: int in 2:
+		await main.get_tree().process_frame
+	wm.spawn_telegraph_time = dr_telegraph
+	wm._alive = 0
+	wm.stop()
+
+	# The wiring: the sampler and the binding run on their own -- no probe sets
+	# _hp_ratio, so a stale or missing player fails here.
+	player.respawn(Vector2.ZERO)
+	wm.bind_player(player)
+	wm.is_running = true
+	wm._wave_seconds = 0.0
+	wm._worst_hp_ratio = 1.0
+	for dr_i: int in 3:
+		await main.get_tree().process_frame
+	if wm._hp_ratio < 0.99:
+		failed.append("director: a full-health player sampled as %.2f" % wm._hp_ratio)
+	if wm._wave_seconds <= 0.0:
+		failed.append("director: the fight clock never advanced while a wave was running")
+	var dr_before: int = player.health
+	player.take_damage(30)
+	if player.health >= dr_before:
+		failed.append("director: the wiring probe could not damage the player (%d hp)" % dr_before)
+	for dr_i2: int in 3:
+		await main.get_tree().process_frame
+	var dr_hurt: float = clampf(float(player.health) / float(player.max_health), 0.0, 1.0)
+	if absf(wm._hp_ratio - dr_hurt) > 0.02:
+		failed.append("director: health sample %.2f, the player is at %.2f" % [wm._hp_ratio, dr_hurt])
+	if wm._worst_hp_ratio > dr_hurt + 0.02:
+		failed.append("director: the low-water mark never followed the hit (%.2f)" % wm._worst_hp_ratio)
+	# Main binds the run's player on boot (_bind_world), which is what makes the
+	# two reads above reachable in a real run.
+	if wm._player != player:
+		failed.append("director: the wave manager is not bound to the run's player")
+	wm.is_running = false
+
+	# The banner label, pinned at the manager's own threshold rather than a copy.
+	wm.pressure = 0.9
+	var dr_rising: String = wm.pressure_label()
+	wm.pressure = -0.9
+	var dr_falling: String = wm.pressure_label()
+	wm.pressure = 0.0
+	var dr_flat: String = wm.pressure_label()
+	if dr_rising != "PRESSURE RISING" or dr_falling != "EASING OFF" or dr_flat != "":
+		failed.append("director: banner labels are '%s' / '%s' / '%s'" % [dr_rising, dr_falling, dr_flat])
+
+	# -- Crit / behavior shop rows (they mutate the POOL) ------------------------
+	# The pool outlives a run, so these rows write to it and Main restores it per run.
+	# Capture the authored values, prove the mutate, then prove the reset.
+	BulletPool.reset_run_config()
+	var pc_base_chance: float = BulletPool.crit_chance
+	var up2: Node = load("res://scripts/upgrade_system.gd").new()
+	main.add_child(up2)
+	up2.buy("crit_chance", 999999, player)
+	if BulletPool.crit_chance <= pc_base_chance:
+		failed.append("crit_chance row did not raise the pool's crit chance")
+	up2.buy("crit_damage", 999999, player)
+	if BulletPool.crit_multiplier <= 2.0:
+		failed.append("crit_damage row did not raise the crit multiplier")
+	up2.buy("homing", 999999, player)
+	up2.buy("ricochet", 999999, player)
+	up2.buy("explosive", 999999, player)
+	if BulletPool.homing_strength <= 0.0:
+		failed.append("homing row did not set homing_strength")
+	if BulletPool.bounce_count < 1:
+		failed.append("ricochet row did not grant a bounce")
+	if BulletPool.explosive_radius <= 0.0 or BulletPool.explosive_damage <= 0:
+		failed.append("explosive row did not arm the kill-blast")
+	# A player round carries the behavior; an enemy round never does.
+	BulletPool.reset()
+	BulletPool.fire(Vector2.ZERO, Vector2.RIGHT, 5, 400.0, false)
+	var pb: Bullet = _last_active_bullet()
+	if pb == null or pb.bounce_left < 1 or pb.homing_scale <= 0.0 or pb.explosive_radius <= 0.0:
+		failed.append("a player round did not inherit the behavior config")
+	BulletPool.reset()
+	BulletPool.fire(Vector2.ZERO, Vector2.RIGHT, 5, 400.0, true)
+	var hb: Bullet = _last_active_bullet()
+	if hb == null or hb.bounce_left != 0 or hb.homing_scale != 0.0 or hb.explosive_radius != 0.0:
+		failed.append("a hostile round inherited the player's behavior config")
+	# The per-run reset puts the pool back to its authored values.
+	BulletPool.reset_run_config()
+	if BulletPool.crit_chance != pc_base_chance or BulletPool.homing_strength != 0.0 \
+			or BulletPool.bounce_count != 0 or BulletPool.explosive_radius != 0.0:
+		failed.append("reset_run_config did not restore the pool")
+	BulletPool.reset()
+	up2.free()
+
+	# -- Seeded run RNG (the DAILY toggle) ----------------------------------------
+	var seed_base: Array[String] = ["chaser", "rusher", "tank", "weaver", "orbiter"]
+	wm.seed_run(123456)
+	var q1: Array = []
+	for i: int in 200:
+		wm._spawn_queue = seed_base.duplicate()
+		wm._shuffle_queue()
+		q1.append(wm._spawn_queue.duplicate())
+	wm.seed_run(123456)
+	var seeded_same: bool = true
+	for i: int in 200:
+		wm._spawn_queue = seed_base.duplicate()
+		wm._shuffle_queue()
+		if wm._spawn_queue != q1[i]:
+			seeded_same = false
+			break
+	if not seeded_same:
+		failed.append("seed_run: the same seed did not reproduce the queue order")
+	wm.seed_run(4242)
+	var aff1: Array = []
+	for i: int in 60:
+		aff1.append(wm._roll_affix(6))
+	wm.seed_run(4242)
+	var aff2: Array = []
+	for i: int in 60:
+		aff2.append(wm._roll_affix(6))
+	if aff1 != aff2:
+		failed.append("seed_run: affix rolls were not reproducible under one seed")
+
+	# -- Arena hazards -----------------------------------------------------------
+	if ArenaHazard.install(null, 0) != null:
+		failed.append("hazard: a null arena should yield no hazard")
+	for row: Dictionary in ArenaHazard.BY_ARENA:
+		var hk: String = String(row.get("kind", ""))
+		if hk != ArenaHazard.KIND_NONE and hk != ArenaHazard.KIND_VENTS \
+				and hk != ArenaHazard.KIND_PULSE and hk != ArenaHazard.KIND_VOID:
+			failed.append("hazard: unknown kind '%s' in BY_ARENA" % hk)
+	var hz_arena := Node2D.new()
+	main.add_child(hz_arena)
+	var hz0: ArenaHazard = ArenaHazard.install(hz_arena, 0)
+	if hz0 != null:
+		failed.append("hazard: arena 1 should be hazard-free")
+	var hz3: ArenaHazard = ArenaHazard.install(hz_arena, 3)
+	if hz3 == null:
+		failed.append("hazard: arena 4 should field a hazard")
+	elif hz3.kind != ArenaHazard.KIND_PULSE:
+		failed.append("hazard: arena 4 kind is '%s', expected pulse" % hz3.kind)
+	# Integration: a void pool actually hurts a player standing in it -- through the
+	# player's own take_damage, so i-frames still gate it (never a per-frame shred).
+	var hz_void: ArenaHazard = ArenaHazard.install(hz_arena, 1)   # deep = void
+	if hz_void == null:
+		failed.append("hazard: arena 2 should field a void hazard")
+	else:
+		player.health = player.max_health
+		player._invuln_timer = 0.0
+		player.global_position = hz_void._pools[0]
+		hz_void._player = player
+		var hz_hp_before: int = player.health
+		hz_void._tick_void(1.0)   # advances past VOID_TICK and fires a hit
+		if player.is_alive and player.health >= hz_hp_before:
+			failed.append("hazard: a void pool did not damage a player standing in it")
+	hz_arena.free()
+
+	# -- Affix marks (the non-colour cue) ----------------------------------------
+	for id: String in EnemyBase.AFFIXES.keys():
+		if not EnemyBase.AFFIX_MARKS.has(id):
+			failed.append("affix '%s' has no non-colour mark" % id)
+	var marked: EnemyBase = (load("res://scenes/enemy_chaser.tscn") as PackedScene).instantiate() as EnemyBase
+	marked.affix = "shielded"
+	main.get_node("World/EnemyContainer").add_child(marked)
+	marked.is_dormant = true
+	if marked.get_node_or_null("AffixMark") == null:
+		failed.append("an affixed enemy did not build its affix mark")
+	marked.free()
+
 	# -- Summary ---------------------------------------------------------------
 	_restore_save(save_had_file, save_snapshot)
 	# The caches have to follow the RESTORED file, not the flags the probes set.
@@ -3121,6 +3419,20 @@ func _player_stat_snapshot(p: Node) -> Dictionary:
 		"pierce_count": p.pierce_count,
 		"charge_unlocked": p.charge_unlocked,
 		"health": p.health,
+	}
+
+
+## The BulletPool tunables a shop row may move (crit + the behavior fields), so the
+## "no dead row" sweep covers the rows that write to the pool instead of the player.
+func _pool_stat_snapshot() -> Dictionary:
+	return {
+		"crit_chance": BulletPool.crit_chance,
+		"crit_multiplier": BulletPool.crit_multiplier,
+		"homing_strength": BulletPool.homing_strength,
+		"homing_range": BulletPool.homing_range,
+		"bounce_count": BulletPool.bounce_count,
+		"explosive_radius": BulletPool.explosive_radius,
+		"explosive_damage": BulletPool.explosive_damage,
 	}
 
 

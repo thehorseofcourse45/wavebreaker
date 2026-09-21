@@ -40,6 +40,15 @@ var pierce_left: int = 0
 var crit_chance: float = 0.0
 var crit_multiplier: float = 2.0
 
+## Pool-owned per-shot behavior config (BulletPool.fire sets these BEFORE fire()):
+## homing turn rate + look range, wall bounces left, and the kill-blast. Inert for
+## a plain round and for every enemy round.
+var homing_scale: float = 0.0
+var homing_range: float = 420.0
+var bounce_left: int = 0
+var explosive_radius: float = 0.0
+var explosive_damage: int = 0
+
 var _hit_ids: Array[int] = []
 var _age: float = 0.0
 
@@ -89,6 +98,9 @@ func _physics_process(delta: float) -> void:
 	if _age >= lifetime:
 		deactivate()
 		return
+	if homing_scale > 0.0 and not hostile:
+		_steer_homing(delta)
+	rotation = direction.angle()
 	var old_pos: Vector2 = global_position
 	global_position += direction * speed * delta
 	# Swept hit: bullets move up to ~20 px/frame -- the plain Area2D shape
@@ -116,7 +128,74 @@ func _physics_process(delta: float) -> void:
 		if not results.is_empty():
 			hit = results[0]
 	if not hit.is_empty():
-		_handle_hit(hit.get("collider") as Node2D)
+		var collider: Node2D = hit.get("collider") as Node2D
+		if collider is StaticBody2D and bounce_left > 0:
+			# Ricochet: reflect off the wall. `normal`/`position` exist on a ray hit
+			# but NOT on the shape-overlap fallback, so guard both.
+			var wall_normal: Vector2 = hit["normal"] if hit.has("normal") else -direction
+			var wall_at: Vector2 = hit["position"] if hit.has("position") else global_position
+			_bounce_off(wall_normal, wall_at)
+		else:
+			_handle_hit(collider)
+
+
+## Homing (shop row): turn the round's heading toward the nearest enemy, capped at
+## homing_scale radians per second so it curves rather than snaps. Re-aimed every
+## frame; the sweep above still resolves whatever it crosses.
+func _steer_homing(delta: float) -> void:
+	var target: Node2D = _nearest_enemy()
+	if target == null:
+		return
+	var to: Vector2 = target.global_position - global_position
+	if to.length_squared() < 1.0:
+		return
+	var max_turn: float = homing_scale * delta
+	direction = direction.rotated(clampf(direction.angle_to(to.normalized()), -max_turn, max_turn))
+
+
+## Closest enemy within homing_range, or null. A plain linear scan: the enemy group
+## is dozens at most, and only homing rounds pay for it.
+func _nearest_enemy() -> Node2D:
+	var best: Node2D = null
+	var best_d: float = homing_range * homing_range
+	for node: Node in get_tree().get_nodes_in_group("enemies"):
+		var enemy: Node2D = node as Node2D
+		if enemy == null or not is_instance_valid(enemy):
+			continue
+		var d: float = global_position.distance_squared_to(enemy.global_position)
+		if d < best_d:
+			best_d = d
+			best = enemy
+	return best
+
+
+## Ricochet (shop row): reflect off a wall instead of dying on it. The round is
+## nudged just clear of the surface so the next frame's ray starts outside it.
+func _bounce_off(normal: Vector2, at: Vector2) -> void:
+	bounce_left -= 1
+	direction = direction.bounce(normal)
+	rotation = direction.angle()
+	global_position = at + normal * 3.0
+
+
+## Explosive (shop row): a round that KILLS detonates. Enemies only -- the blast
+## never hurts the player -- and it does not chain (a blast kill never re-detonates).
+## Damage routes through EnemyBase.take_damage, so armour auras and affixes apply
+## exactly as they do to the bullet itself.
+func _detonate(at: Vector2) -> void:
+	if explosive_radius <= 0.0 or explosive_damage <= 0:
+		return
+	var layer: Node = get_tree().get_first_node_in_group("effects_layer")
+	if layer != null:
+		DeathBurst.spawn(layer, at, Color(1.0, 0.62, 0.2), explosive_radius, 0.3)
+	for node: Node in get_tree().get_nodes_in_group("enemies"):
+		var enemy: EnemyBase = node as EnemyBase
+		if enemy == null or not is_instance_valid(enemy) or enemy.is_dead:
+			continue
+		var offset: Vector2 = enemy.global_position - at
+		if offset.length() <= explosive_radius:
+			var push: Vector2 = offset.normalized() * BulletPool.base_knockback * 0.5 if offset.length_squared() > 1.0 else Vector2.ZERO
+			BulletPool.damage_dealt += int(enemy.take_damage(explosive_damage, push))
 
 
 func _on_body_entered(body: Node2D) -> void:
@@ -151,6 +230,11 @@ func _handle_hit(body: Node2D) -> void:
 		DamageNumbers.spawn(body.global_position, dealt, crit, tint)
 		var applied: int = int(body.take_damage(dealt, direction * knockback_force))
 		BulletPool.damage_dealt += applied   # actual HP removed, not blocked/overkill damage
+		# Explosive rounds detonate on the KILLING blow only: a wounded enemy does not
+		# blast, or every round would be an area weapon. `is_dead` is set by _die()
+		# synchronously inside take_damage.
+		if body is EnemyBase and (body as EnemyBase).is_dead:
+			_detonate(body.global_position)
 		if pierce_left > 0:
 			pierce_left -= 1
 			return   # keep flying: shop "pierce" rounds pass through N enemies
@@ -167,6 +251,12 @@ func deactivate() -> void:
 	is_active = false
 	visible = false
 	_hit_ids.clear()   # the next flight starts with a clean pierce history
+	# Behavior config is PER SHOT too (see BulletPool.fire): clear it so a plain
+	# round dealt this pooled bullet cannot inherit homing / bounces / a blast.
+	homing_scale = 0.0
+	bounce_left = 0
+	explosive_radius = 0.0
+	explosive_damage = 0
 	# Range and size are PER SHOT (see BulletPool.fire), so they must not survive a
 	# flight: the pool is shared with the enemies, whose rounds pass neither.
 	lifetime = BASE_LIFETIME
@@ -182,6 +272,10 @@ func _deactivate_immediate() -> void:
 	hostile = false
 	visible = false
 	_hit_ids.clear()
+	homing_scale = 0.0
+	bounce_left = 0
+	explosive_radius = 0.0
+	explosive_damage = 0
 	lifetime = BASE_LIFETIME
 	scale = Vector2.ONE
 	set_deferred("monitoring", false)
