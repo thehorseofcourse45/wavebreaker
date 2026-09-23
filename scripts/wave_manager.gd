@@ -17,12 +17,36 @@ signal game_over
 
 @export_group("Waves (data-driven)")
 @export var wave_table: Array[Dictionary] = [
-	{"chaser": 4, "rusher": 0, "tank": 0, "weaver": 0, "orbiter": 0, "shooter": 0, "splitter": 0, "elite": 0, "leaper": 0, "bulwark": 0, "sniper": 0, "pulsar": 0, "medic": 0, "skirmisher": 0, "rammer": 0, "hp_mult": 1.0, "speed_mult": 1.0},
-	{"chaser": 5, "rusher": 3, "tank": 0, "weaver": 2, "orbiter": 0, "shooter": 0, "splitter": 0, "elite": 0, "leaper": 2, "bulwark": 0, "sniper": 1, "pulsar": 0, "medic": 0, "skirmisher": 0, "rammer": 0, "hp_mult": 1.05, "speed_mult": 1.0},
-	{"chaser": 6, "rusher": 4, "tank": 1, "weaver": 2, "orbiter": 1, "shooter": 1, "splitter": 0, "elite": 0, "leaper": 2, "bulwark": 1, "sniper": 1, "pulsar": 1, "medic": 0, "skirmisher": 0, "rammer": 0, "hp_mult": 1.1, "speed_mult": 1.02},
-	{"chaser": 6, "rusher": 6, "tank": 2, "weaver": 3, "orbiter": 2, "shooter": 1, "splitter": 1, "elite": 0, "leaper": 3, "bulwark": 1, "sniper": 1, "pulsar": 1, "medic": 1, "skirmisher": 0, "rammer": 0, "hp_mult": 1.2, "speed_mult": 1.05},
-	{"chaser": 8, "rusher": 8, "tank": 3, "weaver": 4, "orbiter": 3, "shooter": 2, "splitter": 2, "elite": 0, "leaper": 3, "bulwark": 2, "sniper": 2, "pulsar": 1, "medic": 1, "skirmisher": 2, "rammer": 0, "hp_mult": 1.3, "speed_mult": 1.08},
-	{"chaser": 10, "rusher": 10, "tank": 4, "weaver": 5, "orbiter": 4, "shooter": 3, "splitter": 2, "elite": 1, "leaper": 4, "bulwark": 2, "sniper": 2, "pulsar": 2, "medic": 1, "skirmisher": 2, "rammer": 2, "hp_mult": 1.45, "speed_mult": 1.1},
+	{"chaser": 4, "rusher": 0, "tank": 0, "weaver": 0, "orbiter": 0, "shooter": 0, "splitter": 0, "elite": 0, "leaper": 0, "bulwark": 0, "sniper": 0, "pulsar": 0, "medic": 0, "skirmisher": 0, "rammer": 0, "sentinel": 0, "phalanx": 0, "bomber": 0, "carrier": 0, "skitterer": 0, "mirage": 0, "bombardier": 0, "phantom": 0, "hp_mult": 1.0, "speed_mult": 1.0},
+	{"chaser": 5, "rusher": 3, "tank": 0, "weaver": 2, "orbiter": 0, "shooter": 0, "splitter": 0, "elite": 0, "leaper": 2, "bulwark": 0, "sniper": 1, "pulsar": 0, "medic": 0, "skirmisher": 0, "rammer": 0, "sentinel": 0, "phalanx": 0, "bomber": 0, "carrier": 0, "skitterer": 0, "mirage": 0, "bombardier": 0, "phantom": 0, "hp_mult": 1.05, "speed_mult": 1.0},
+	{"chaser": 6, "rusher": 4, "tank": 1, "weaver": 2, "orbiter": 1, "shooter": 1, "splitter": 0, "elite": 0, "leaper": 2, "bulwark": 1, "sniper": 1, "pulsar": 1, "medic": 0, "skirmisher": 0, "rammer": 0, "sentinel": 1, "phalanx": 0, "bomber": 0, "carrier": 0, "skitterer": 2, "mirage": 0, "bombardier": 0, "phantom": 0, "hp_mult": 1.1, "speed_mult": 1.02},
+	{"chaser": 6, "rusher": 6, "tank": 2, "weaver": 3, "orbiter": 2, "shooter": 1, "splitter": 1, "elite": 0, "leaper": 3, "bulwark": 1, "sniper": 1, "pulsar": 1, "medic": 1, "skirmisher": 0, "rammer": 0, "sentinel": 0, "phalanx": 2, "bomber": 1, "carrier": 0, "skitterer": 0, "mirage": 1, "bombardier": 0, "phantom": 0, "hp_mult": 1.2, "speed_mult": 1.05},
+	{"chaser": 8, "rusher": 8, "tank": 3, "weaver": 4, "orbiter": 3, "shooter": 2, "splitter": 2, "elite": 0, "leaper": 3, "bulwark": 2, "sniper": 2, "pulsar": 1, "medic": 1, "skirmisher": 2, "rammer": 0, "sentinel": 1, "phalanx": 0, "bomber": 1, "carrier": 1, "skitterer": 2, "mirage": 0, "bombardier": 1, "phantom": 1, "hp_mult": 1.3, "speed_mult": 1.08},
+	{"chaser": 10, "rusher": 10, "tank": 4, "weaver": 5, "orbiter": 4, "shooter": 3, "splitter": 2, "elite": 1, "leaper": 4, "bulwark": 2, "sniper": 2, "pulsar": 2, "medic": 1, "skirmisher": 2, "rammer": 2, "sentinel": 2, "phalanx": 2, "bomber": 2, "carrier": 1, "skitterer": 3, "mirage": 2, "bombardier": 1, "phantom": 2, "hp_mult": 1.45, "speed_mult": 1.1},
+]
+
+## Random-waves mode's 17 archetypes. Each NEW wave in a random-waves run rolls
+## one of these instead of the authored table; counts scale with wave number the
+## same way the procedural rows do. Keys are Beasts' slugs (same contract as
+## `wave_table`), plus optional `hp_mult`/`speed_mult` per-archetype multipliers.
+const WAVE_ARCHETYPES: Array[Dictionary] = [
+	{"name": "SWARM", "chaser": 8, "rusher": 12},
+	{"name": "WARPACK", "rusher": 10, "skirmisher": 6, "leaper": 4, "skitterer": 4},
+	{"name": "WALL", "tank": 5, "bulwark": 3, "chaser": 5, "phalanx": 4},
+	{"name": "SNIPER NEST", "sniper": 4, "weaver": 5, "chaser": 4, "sentinel": 3},
+	{"name": "SURGE", "pulsar": 4, "orbiter": 6, "chaser": 4, "mirage": 4},
+	{"name": "TRIAGE", "medic": 4, "tank": 3, "chaser": 6, "carrier": 2},
+	{"name": "THE HUNT", "leaper": 8, "skirmisher": 5, "chaser": 3},
+	{"name": "VANGUARD", "elite": 4, "chaser": 6},
+	{"name": "REAVE", "rammer": 8, "chaser": 6},
+	{"name": "SCREEN", "tank": 4, "rusher": 8, "chaser": 2},
+	{"name": "TENDRIL", "weaver": 6, "orbiter": 4, "pulsar": 3},
+	{"name": "CRESCENDO", "chaser": 6, "rusher": 5, "tank": 2, "weaver": 2, "shooter": 2, "leaper": 2, "sniper": 2, "pulsar": 1, "bomber": 2, "phantom": 2, "bombardier": 1},
+	{"name": "IRON FORTRESS", "tank": 5, "bulwark": 3, "medic": 3, "chaser": 2, "hp_mult": 1.15, "speed_mult": 0.95},
+	{"name": "BROOD", "splitter": 6, "chaser": 5},
+	{"name": "LAST STAND", "elite": 2, "tank": 3, "bulwark": 2, "sniper": 2, "pulsar": 2, "rusher": 6, "hp_mult": 1.1},
+	{"name": "ARSENAL", "sentinel": 4, "bombardier": 3, "sniper": 2, "chaser": 4},
+	{"name": "PHASE SHIFT", "phantom": 5, "mirage": 4, "weaver": 3},
 ]
 
 @export_group("Pacing")
@@ -95,6 +119,9 @@ const DIFFICULTY_ORDER: Array[String] = ["easy", "normal", "hard", "nightmare"]
 var boss_rush: bool = false
 ## Set by Main from the menu's saved preference.
 var difficulty: String = "normal"
+## Random-waves mode: each non-boss wave rolls one archetype from
+## WAVE_ARCHETYPES instead of following the authored table.
+var random_waves: bool = false
 
 
 ## Is this difficulty playable yet? Rows without an `unlock` are always available;
@@ -166,6 +193,9 @@ var current_wave: int = 0
 var is_running: bool = false
 var shop_pause_enabled: bool = false  # Main picks up wave_cleared and pauses here
 var hard_arena: bool = false          # set by Main after the arena swap
+## The name of the archetype this wave rolled ("" off random mode or on a boss
+## wave); Main shows it on the banner.
+var _current_archetype: String = ""
 
 ## The run's random source. Every wave-level draw routes through it -- queue
 ## shuffle, spawn jitter, affix roll -- so one seed reproduces a whole run. Main
@@ -455,16 +485,47 @@ func _apply_director(comp: Dictionary, wave_number: int) -> void:
 
 func _composition_for_wave(wave_number: int) -> Dictionary:
 	if is_boss_wave(wave_number):
+		_current_archetype = ""
 		# The boss IS the wave: normal scaling for its stat multipliers, but the
 		# escort is trimmed to a handful of chasers so it never reads as a swarm.
 		var boss_comp: Dictionary = _base_composition(wave_number)
 		for key: String in ["rusher", "tank", "weaver", "orbiter", "shooter", "splitter",
-				"elite", "bulwark", "leaper", "sniper", "pulsar", "medic", "skirmisher", "rammer"]:
+				"elite", "bulwark", "leaper", "sniper", "pulsar", "medic", "skirmisher", "rammer",
+				"sentinel", "phalanx", "bomber", "carrier", "skitterer", "mirage", "bombardier", "phantom"]:
 			boss_comp[key] = 0
 		boss_comp["chaser"] = boss_escort_chasers
 		boss_comp["boss"] = boss_count_for_wave(wave_number)
 		return boss_comp
+	if random_waves:
+		return _random_archetype(wave_number)
+	_current_archetype = ""
 	return _base_composition(wave_number)
+
+
+## A random-waves run rolls one of the 17 archetypes per wave, scaled by wave
+## number like the procedural rows grow. Drawn through this run's rng, so a
+## DAILY-seeded random run is still reproducible.
+func _random_archetype(wave_number: int) -> Dictionary:
+	var base: Dictionary = WAVE_ARCHETYPES[rng.randi_range(0, WAVE_ARCHETYPES.size() - 1)]
+	_current_archetype = String(base.get("name", ""))
+	var growth: int = maxi(wave_number - 1, 0)
+	var scale: float = 1.0 + float(growth) * 0.12
+	var comp: Dictionary = {}
+	for key: String in base:
+		if key == "name":
+			continue
+		if key == "hp_mult":
+			comp[key] = float(base[key]) + float(growth) * hp_growth_per_wave
+		elif key == "speed_mult":
+			comp[key] = minf(float(base[key]) + float(growth) * speed_growth_per_wave, max_speed_mult)
+		else:
+			comp[key] = maxi(1, int(round(float(base[key]) * scale)))
+	return comp
+
+
+## What the wave banner should tag this wave with ("" = nothing to show).
+func wave_archetype() -> String:
+	return _current_archetype
 
 
 func _base_composition(wave_number: int) -> Dictionary:
@@ -491,6 +552,14 @@ func _base_composition(wave_number: int) -> Dictionary:
 		"medic": 1 + (extra / 5),
 		"skirmisher": 1 + (extra / 3),
 		"rammer": 1 + (extra / 4),
+		"sentinel": 1 + (extra / 3),
+		"phalanx": 1 + extra,
+		"bomber": 1 + (extra / 3),
+		"carrier": 1 + (extra / 5),
+		"skitterer": 1 + (extra / 2),
+		"mirage": 1 + (extra / 4),
+		"bombardier": 1 + (extra / 4),
+		"phantom": 1 + (extra / 4),
 		"hp_mult": float(base.get("hp_mult", 1.4)) + extra * hp_growth_per_wave,
 		"speed_mult": minf(float(base.get("speed_mult", 1.1)) + extra * speed_growth_per_wave, max_speed_mult),
 	}

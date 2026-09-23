@@ -78,6 +78,9 @@ var _no_shop: bool = false
 ## The DAILY toggle (a menu run option): pins the wave RNG to today's date, so
 ## every run today deals the same waves and a run is reproducible. Off = random.
 var _daily_seed: bool = false
+## The RANDOM-waves mode toggle (a menu run option): every wave rolls one of the
+## 17 archetypes instead of the authored table.
+var _random_waves: bool = false
 ## The run's weapon archetype (weapons.gd). The menu owns the preference, Main
 ## only seeds it from disk and forwards it to the player at run start.
 var _weapon: String = "rifle"
@@ -389,9 +392,11 @@ func start_game() -> void:
 	_run_time = 0.0
 	_second_wind_used = false
 	BulletPool.damage_dealt = 0   # the STATS tab's DPS column is per run
-	# Crit / homing / ricochet / explosive are shop rows that mutate the POOL, which
-	# outlives a run: restore them before the shop can modify them again.
+	# Crit / homing / ricochet / explosive / group multipliers are shop rows that
+	# mutate the POOLS, which outlive a run: restore them before the shop can
+	# modify them again. PickupPool rides the same contract (magnet/scavenger).
 	BulletPool.reset_run_config()
+	PickupPool.reset_run_config()
 	# Pin the wave RNG for a DAILY run (no-op on an ordinary one).
 	_apply_run_seed()
 	# The weapon archetype is a BASE loadout, applied BEFORE the perks and the
@@ -412,6 +417,7 @@ func start_game() -> void:
 	# sell armor this run, which is why the block list is set here and not in the
 	# shop: one place owns "what this run allows".
 	_waves.boss_rush = _boss_rush
+	_waves.random_waves = _random_waves
 	# fog: the player owns its torch, so the run asks for the scaled reach.
 	_player.set_torch_scale(0.5 if _fog else 1.0)
 	# elite_storm: every spawn rolls an affix, chance table ignored.
@@ -456,12 +462,14 @@ func _enter_menu() -> void:
 	_elite_storm = bool(Storage.get_value("elite_storm", false))
 	_no_shop = bool(Storage.get_value("no_shop", false))
 	_daily_seed = bool(Storage.get_value("daily_seed", false))
+	_random_waves = bool(Storage.get_value("random_waves", false))
 	# The weapon archetype is a preference too: seeded here so a scene reload, a
 	# return to the menu and a RESET SAVE all keep showing the picked gun.
 	_weapon = String(Weapons.resolve(String(Storage.get_value(Weapons.SAVE_KEY, Weapons.DEFAULT_ID))).id)
 	_player.apply_weapon(_weapon)
 	_waves.boss_rush = _boss_rush
 	_waves.force_affixes = _elite_storm
+	_waves.random_waves = _random_waves
 	_player.controls_enabled = false
 	_hud.visible = false
 	_banner.visible = false
@@ -472,6 +480,7 @@ func _enter_menu() -> void:
 	_menu.set_weapon(_weapon)
 	_menu.refresh_run_options(_glass_cannon, _boss_rush, _fog, _elite_storm, _no_shop)
 	_menu.set_daily(_daily_seed)
+	_menu.set_random_waves(_random_waves)
 	_menu.sync_audio_sliders()   # the pause menu moves the same volumes
 	_menu.refresh_stats()   # a record set this session shows up without a restart
 	_shop.hide_shop()
@@ -515,6 +524,12 @@ func _on_weapon_changed(id: String) -> void:
 ## Main only forwards it, like ENDLESS. It applies at the next run start.
 func _on_daily_seed_toggled(enabled: bool) -> void:
 	_daily_seed = enabled
+
+
+## The menu owns the RANDOM-waves mode (it writes the save and announces the
+## change); Main only forwards it, like DAILY. It applies at the next run start.
+func _on_random_waves_toggled(enabled: bool) -> void:
+	_random_waves = enabled
 
 
 ## Pin this run's wave RNG. DAILY seeds it to today's date, so every player gets the
@@ -659,6 +674,7 @@ func _wire_signals() -> void:
 	_menu.mutators_changed.connect(_on_mutators_changed)
 	_menu.weapon_changed.connect(_on_weapon_changed)
 	_menu.daily_seed_toggled.connect(_on_daily_seed_toggled)
+	_menu.random_waves_toggled.connect(_on_random_waves_toggled)
 	_game_over.restart_pressed.connect(_restart)
 	# Pause menu.
 	_pause_menu.resume_pressed.connect(_on_pause_resume)
@@ -684,7 +700,7 @@ func _wire_signals() -> void:
 ## emits health_changed for the HUD).
 func _on_pickup_collected(kind: String) -> void:
 	if kind == "health":
-		_player.heal(PICKUP_HEALTH)
+		_player.heal(int(round(float(PICKUP_HEALTH) * PickupPool.heal_mult)))
 	else:
 		_credits += Perks.scaled_credits(PICKUP_CREDITS)
 		_hud.set_credits(_credits)
@@ -737,11 +753,14 @@ func _on_boss_phase_changed(phase: int, color: Color, at: Vector2) -> void:
 
 func _on_enemy_killed(enemy: EnemyBase) -> void:
 	_score += enemy.score_value
-	_credits += Perks.scaled_credits(enemy.score_value)
+	# Shop "bounty" scales the PERK-scaled grant (fortune x bounty stack).
+	_credits += int(round(float(Perks.scaled_credits(enemy.score_value)) * _player.credit_mult))
 	_kills += 1
 	# Pickups: a configurable share of kills drops one. Health only while the
 	# player is actually hurt, so a full-health floor never rolls green.
-	if randf() < pickup_drop_chance:
+	# Shop "scavenger" adds to the SAME single roll (a second randf() here would
+	# make the two sources interact as odds-of-odds instead of a flat bonus).
+	if randf() < pickup_drop_chance + PickupPool.extra_drop_chance:
 		var pickup_kind: String = "health" \
 				if _player.health < _player.max_health and randf() < 0.35 \
 				else "credits"
@@ -788,6 +807,9 @@ func _on_wave_started(wave_number: int) -> void:
 	# The director's verdict on the LAST wave rides this wave's banner: a bias the
 	# player cannot see is a bias the player cannot learn from.
 	var label: String = "WAVE %d" % wave_number
+	var tag: String = _waves.wave_archetype()
+	if tag != "":
+		label += " - %s" % tag
 	var note: String = _waves.pressure_label()
 	if note != "":
 		label += " - " + note
@@ -830,14 +852,17 @@ func _on_shop_buy(id: String) -> void:
 
 
 ## A reroll re-deals the offered rows. Main owns the credits, so it pays once and
-## only then asks the shop to re-deal; the shop never touches the balance.
+## only then asks the shop to re-deal; the shop never touches the balance. The
+## PRICE comes from the shop's one formula (bargain levels read there), so the
+## charge can never drift from the button label.
 func _on_shop_reroll() -> void:
-	if _credits < _shop.REROLL_COST:
+	var cost: int = ShopPanel.effective_reroll_cost(_upgrades)
+	if _credits < cost:
 		return
-	_credits -= _shop.REROLL_COST
+	_credits -= cost
 	_hud.set_credits(_credits)
 	_shop.reroll(_upgrades, _credits, _player)
-	print("[Shop] Rerolled offers for %d (credits left: %d)" % [_shop.REROLL_COST, _credits])
+	print("[Shop] Rerolled offers for %d (credits left: %d)" % [cost, _credits])
 
 
 func _on_shop_resume() -> void:

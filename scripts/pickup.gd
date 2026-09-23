@@ -67,7 +67,8 @@ func _physics_process(delta: float) -> void:
 			return
 	var to_player: Vector2 = _player.global_position - global_position
 	var dist: float = to_player.length()
-	if dist > 0.01 and dist <= magnet_radius:
+	# Shop "magnet" multiplies the grab radius live (pool restores it per run).
+	if dist > 0.01 and dist <= magnet_radius * PickupPool.magnet_mult:
 		# Magnet: pulls in from a distance, so walking past is enough to scoop.
 		global_position += to_player / dist * magnet_speed * delta
 		rotation += 6.0 * delta

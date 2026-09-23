@@ -1,0 +1,15 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/enemy_phantom.gd" id="1"]
+[ext_resource type="PackedScene" path="res://scenes/enemy_base.tscn" id="2"]
+
+[node name="Enemy" instance=ExtResource("2")]
+script = ExtResource("1")
+max_health = 46
+contact_damage = 10
+move_speed = 110.0
+score_value = 24
+
+[node name="Body" parent="." index="0"]
+color = Color(0.75, 0.85, 1, 1)
+polygon = PackedVector2Array(0, -16, 12, 4, 6, 14, -6, 14, -12, 4)

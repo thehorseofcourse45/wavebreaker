@@ -22,6 +22,9 @@ signal weapon_changed(id: String)
 ## The DAILY run option (seeds the run to today's date). A separate signal from the
 ## mutator bundle because it is not a mutator -- Main stores it on its own.
 signal daily_seed_toggled(enabled: bool)
+## The RANDOM-waves mode: every wave rolls one of WaveManager's 17 archetypes.
+## Not part of the mutator bundle (it is a MODE, not a handicap), so its own signal.
+signal random_waves_toggled(enabled: bool)
 
 const Storage := preload("res://scripts/storage.gd")
 ## A second click inside this window is the confirmation that wipes the records.
@@ -33,13 +36,14 @@ const RESET_CONFIRM_WINDOW := 4.0
 @onready var _start_button: Button = $Center/Card/Margin/Column/StartButton
 @onready var _endless_check: CheckButton = $Center/Card/Margin/Column/EndlessCheck
 @onready var _difficulty_row: HBoxContainer = $Center/Card/Margin/Column/DifficultyRow
-@onready var _mutators_row: HBoxContainer = $Center/Card/Margin/Column/Mutators
+@onready var _mutators_row: FlowContainer = $Center/Card/Margin/Column/Mutators
 @onready var _glass_check: CheckButton = $Center/Card/Margin/Column/Mutators/GlassCheck
 @onready var _boss_check: CheckButton = $Center/Card/Margin/Column/Mutators/BossCheck
 @onready var _fog_check: CheckButton = $Center/Card/Margin/Column/Mutators/FogCheck
 @onready var _elite_check: CheckButton = $Center/Card/Margin/Column/Mutators/EliteCheck
 @onready var _no_shop_check: CheckButton = $Center/Card/Margin/Column/Mutators/NoShopCheck
 @onready var _daily_check: CheckButton = $Center/Card/Margin/Column/Mutators/DailyCheck
+@onready var _random_check: CheckButton = $Center/Card/Margin/Column/RandomCheck
 @onready var _music_slider: HSlider = $Center/Card/Margin/Column/Audio/MusicRow/MusicSlider
 @onready var _sfx_slider: HSlider = $Center/Card/Margin/Column/Audio/SfxRow/SfxSlider
 @onready var _reset_button: Button = $Center/Card/Margin/Column/ResetButton
@@ -53,6 +57,8 @@ var _difficulty_buttons: Dictionary = {}   # id -> Button
 ## within ~7 px of its 715 px guard at 720p, and the row is the run-options row
 ## anyway. Builder, not .tscn, so nobody has to reload the scene from disk.
 var _weapon_picker: OptionButton = null
+## The RANDOM-waves mode toggle, authored in the scene on its own row (the
+## run-options row was already full -- cramming it in widened the card off-screen).
 
 
 func _ready() -> void:
@@ -85,6 +91,8 @@ func _ready() -> void:
 	_no_shop_check.toggled.connect(_on_mutator_toggled)
 	_daily_check.set_pressed_no_signal(bool(Storage.get_value("daily_seed", false)))
 	_daily_check.toggled.connect(_on_daily_toggled)
+	_random_check.set_pressed_no_signal(bool(Storage.get_value("random_waves", false)))
+	_random_check.toggled.connect(_on_random_toggled)
 	# Sliders write straight through to AudioManager, which owns the save key.
 	_music_slider.value_changed.connect(AudioManager.set_music_volume)
 	_sfx_slider.value_changed.connect(AudioManager.set_sfx_volume)
@@ -223,6 +231,21 @@ func _update_weapon_tooltip() -> void:
 	_weapon_picker.tooltip_text = "%s - %s" % [Weapons.display_name(id), Weapons.hint(id)]
 
 
+# ------------------------------------------------------------- random waves ---
+
+## Called by Main on boot/menu re-entry (and after a RESET SAVE) to reflect the
+## saved preference without re-writing it -- same rule as set_daily.
+func set_random_waves(enabled: bool) -> void:
+	_random_check.set_pressed_no_signal(enabled)
+
+
+## The menu owns this preference (it is the only writer), so the toggle writes
+## the save itself and tells Main, exactly like DAILY.
+func _on_random_toggled(enabled: bool) -> void:
+	Storage.set_value("random_waves", enabled)
+	random_waves_toggled.emit(enabled)
+
+
 # --------------------------------------------------------------- mutators ---
 
 ## Called by Main on boot and on every menu re-entry. Glass cannon and boss rush
@@ -293,6 +316,7 @@ func _on_reset_pressed() -> void:
 	# The toggles are preferences and survive, but their unlockables are gone.
 	refresh_run_options(_glass_check.button_pressed, _boss_check.button_pressed,
 			_fog_check.button_pressed, _elite_check.button_pressed, _no_shop_check.button_pressed)
+	set_random_waves(bool(Storage.get_value("random_waves", false)))
 	_disarm_reset()
 	refresh_stats()
 

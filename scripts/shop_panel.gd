@@ -51,6 +51,13 @@ func build(up: Node) -> void:
 		lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		var btn := Button.new()
 		btn.pressed.connect(func() -> void: buy_attempted.emit(String(d.id)))
+		# One line icon per row (ShopIcon._draw, no art files). The shape/colour
+		# come from the row's DEFS "icon" entry; missing key = hollow square.
+		var ic: Variant = d.get("icon", null)
+		if ic is Array and (ic as Array).size() >= 2:
+			var icon := ShopIcon.new()
+			icon.setup(String((ic as Array)[0]), String((ic as Array)[1]))
+			h.add_child(icon)
 		h.add_child(lbl)
 		h.add_child(btn)
 		_list.add_child(h)
@@ -75,7 +82,8 @@ func deal(up: Node) -> void:
 			continue
 		pool.append(id)
 	pool.shuffle()
-	_offered = pool.slice(0, mini(OFFER_COUNT, pool.size()))
+	# Shop "offers" widens the hand by its level; capped by what is buyable.
+	_offered = pool.slice(0, mini(OFFER_COUNT + up.level("offers"), pool.size()))
 	_row_ids = _offered.duplicate()
 
 
@@ -110,8 +118,11 @@ func refresh(up: Node, credits: int, player: Node = null) -> void:
 	if up == null:
 		return
 	_credits_label.text = "CREDITS: %d" % credits
-	_reroll_btn.text = "REROLL (%d)" % REROLL_COST
-	_reroll_btn.disabled = credits < REROLL_COST
+	# One price formula, read by the button AND by Main's reroll charge, so
+	# shop "bargain" can never drift between what the label says and what lands.
+	var rc: int = effective_reroll_cost(up)
+	_reroll_btn.text = "REROLL (%d)" % rc
+	_reroll_btn.disabled = credits < rc
 	for d: Dictionary in up.DEFS:
 		var id := String(d.id)
 		if not _rows.has(id):
@@ -145,6 +156,17 @@ func refresh(up: Node, credits: int, player: Node = null) -> void:
 func show_shop(up: Node, credits: int, player: Node = null) -> void:
 	refresh(up, credits, player)
 	show()
+
+
+## What a reroll costs THIS build. Static so Main (which owns the credits) and
+## the shop's own refresh read one formula -- shop "bargain" (-40% per level)
+## updates the label and the charge together. Level 0 == REROLL_COST exactly,
+## which is what the suite's reroll probe pins.
+static func effective_reroll_cost(up: Node) -> int:
+	if up == null:
+		return REROLL_COST
+	var cut: float = 1.0 - 0.4 * float(up.level("bargain"))
+	return int(round(float(REROLL_COST) * cut))
 
 
 func hide_shop() -> void:

@@ -109,6 +109,20 @@ const BULLET_SPREAD_DEG := 7.0
 ## kill. Both are read where they apply -- take_damage() and Main's kill handler.
 var damage_reduction: float = 0.0
 var kill_heal: int = 0
+## The second twenty's player-side rows (see UpgradeSystem.DEFS). Each is read
+## where it applies: dash scan, take_damage, _process, _effective_fire_rate.
+var dash_strike_dmg: int = 0
+var retaliate_dmg: int = 0
+var regen_rate: float = 0.0        # HP per second (0 = off)
+var adrenaline_mult: float = 1.0   # fire-rate multiplier below half health
+var evasion_chance: float = 0.0    # 0..1 dodge odds, capped at 0.40 by the shop
+## The third ten's player-side rows (see UpgradeSystem.DEFS). Each is read where
+## it applies: _handle_movement, take_damage, Main's kill handler.
+var credit_mult: float = 1.0       # shop "bounty": kill credits multiplier
+var knockback_resist: float = 0.0  # shop "anchor": 0..0.8 of a push ignored
+var last_stand_charges: int = 0    # shop "last_stand": lethal hits eaten
+const DASH_STRIKE_RADIUS := 42.0
+const RETALIATE_RADIUS := 90.0
 
 ## How long the muzzle flash polygon stays lit after a shot.
 const MUZZLE_FLASH_TIME := 0.045
@@ -123,6 +137,11 @@ var _fire_cooldown: float = 0.0
 var _dash_timer: float = 0.0
 var _dash_cooldown_left: float = 0.0
 var _dash_dir: Vector2 = Vector2.ZERO
+## Shop "dash strike": enemies this dash already hit (instance ids), cleared on
+## the next dash so one pass damages each body at most once.
+var _dash_hit: Array[int] = []
+## Shop "regen": fractional HP accumulator, so 0.2 HP/s heals 1 HP every 5 s.
+var _regen_acc: float = 0.0
 ## Pristine bullet_damage from _ready: mutators scale THIS, never the live value.
 var _base_bullet_damage: int = 0
 ## The weapon-folded base for the two stats the shop only ever multiplies, so
@@ -312,6 +331,7 @@ func try_dash() -> bool:
 	_dash_dir = input_dir if input_dir != Vector2.ZERO else Vector2.RIGHT.rotated(_aim_pivot.rotation)
 	_dash_timer = dash_time
 	_dash_cooldown_left = dash_cooldown
+	_dash_hit.clear()
 	# i-frames for the whole dash, through the ONE timer take_damage reads.
 	# maxf: a dash never shortens i-frames the player already has.
 	_invuln_timer = maxf(_invuln_timer, dash_time)
@@ -331,10 +351,35 @@ func _update_dash(delta: float) -> void:
 	# Velocity, never global_position: move_and_slide still resolves walls and
 	# obstacles, so a dash into cover stops instead of tunneling through it.
 	velocity = _dash_dir * dash_speed
+	if dash_strike_dmg > 0:
+		_dash_strike_scan()
+
+
+## Shop "dash strike": every enemy this dash touches eats one hit. The per-dash
+## id set keeps a lingering dash from multi-ticking the same body.
+func _dash_strike_scan() -> void:
+	for node: Node in get_tree().get_nodes_in_group("enemies"):
+		var eb := node as EnemyBase
+		if eb == null or eb.is_dead:
+			continue
+		var eid: int = eb.get_instance_id()
+		if _dash_hit.has(eid):
+			continue
+		if global_position.distance_to(eb.global_position) > DASH_STRIKE_RADIUS:
+			continue
+		_dash_hit.append(eid)
+		eb.take_damage(dash_strike_dmg)
 
 
 func _process(delta: float) -> void:
 	_update_damage_visuals(delta)
+	# Shop "regen": accumulate fractional HP so a low rate still heals on time.
+	if regen_rate > 0.0 and is_alive:
+		_regen_acc += regen_rate * delta
+		if _regen_acc >= 1.0:
+			var whole: int = int(_regen_acc)
+			_regen_acc -= float(whole)
+			heal(whole)
 
 
 func _handle_movement(delta: float) -> void:
@@ -363,8 +408,17 @@ func _handle_firing(delta: float) -> void:
 	_handle_charge(delta)
 	var want_fire: bool = Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) or _simulated_fire
 	if want_fire and _fire_cooldown <= 0.0:
-		_fire_cooldown = fire_rate
+		_fire_cooldown = _effective_fire_rate()
 		_fire_bullet()
+
+
+## Effective seconds between shots: shop "adrenaline" (below half health) lives
+## here, and BOTH the trigger and the charge's post-shot lockout read this, so
+## one stat can never drift between the two paths.
+func _effective_fire_rate() -> float:
+	if adrenaline_mult > 1.0 and health < max_health * 0.5:
+		return fire_rate * adrenaline_mult
+	return fire_rate
 
 
 ## RMB charge state machine. Held -> the charge grows and the muzzle flash grows
@@ -387,7 +441,7 @@ func _handle_charge(delta: float) -> void:
 		return
 	if released < charge_time * CHARGE_MIN_RATIO or _fire_cooldown > 0.0:
 		return
-	_fire_cooldown = fire_rate * CHARGE_COOLDOWN_MULT
+	_fire_cooldown = _effective_fire_rate() * CHARGE_COOLDOWN_MULT
 	fire_charged(released / charge_time)
 
 
@@ -442,17 +496,44 @@ func _fire_bullet() -> void:
 func take_damage(amount: int, knockback: Vector2 = Vector2.ZERO) -> void:
 	if not is_alive or _invuln_timer > 0.0 or amount <= 0:
 		return
+	# Shop "evasion": a clean miss -- no damage, no i-frames spent, so the roll can
+	# fire again on the next hit (chance 0/1 is deterministic for the suite).
+	if evasion_chance > 0.0 and randf() < evasion_chance:
+		return
 	# Shop "armor" soaks a flat share of every hit, always leaving at least 1.
 	var dealt: int = maxi(1, int(round(float(amount) * (1.0 - clampf(damage_reduction, 0.0, 0.9)))))
 	health = maxi(health - dealt, 0)
 	_invuln_timer = invulnerability_time
 	_flash_timer = flash_time
 	if knockback != Vector2.ZERO:
-		velocity += knockback
+		# Shop "anchor": a braced player takes only the share it cannot soak.
+		velocity += knockback * (1.0 - clampf(knockback_resist, 0.0, 0.8))
 	health_changed.emit(health, max_health)
 	damaged.emit(dealt)
 	if health <= 0:
+		# Shop "last_stand": eat the killing blow on a charge and stand back up
+		# at 1 HP. The hit's i-frames still land, so the follow-up cannot chain.
+		if last_stand_charges > 0:
+			last_stand_charges -= 1
+			health = 1
+			health_changed.emit(health, max_health)
+			return
 		_die()
+	elif retaliate_dmg > 0:
+		_retaliate()
+
+
+## Shop "retaliate": a short AoE pulse every time a hit actually landed (not on
+## a dodge -- that path returns before this). Skips the killing blow: no pulse
+## from a dead player.
+func _retaliate() -> void:
+	for node: Node in get_tree().get_nodes_in_group("enemies"):
+		var eb := node as EnemyBase
+		if eb == null or eb.is_dead:
+			continue
+		if global_position.distance_to(eb.global_position) > RETALIATE_RADIUS:
+			continue
+		eb.take_damage(retaliate_dmg)
 
 
 ## Shop "leech" calls this from Main's kill handler.

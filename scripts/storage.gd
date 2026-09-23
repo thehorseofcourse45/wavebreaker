@@ -14,7 +14,7 @@ const PATH := "user://save.json"
 ## wiping records must not silently move the player back to NORMAL either.
 const PREFERENCE_KEYS: Array[String] = ["music_volume", "sfx_volume", "endless",
 	"difficulty", "glass_cannon", "boss_rush", "fog", "elite_storm", "no_shop",
-	"weapon"]
+	"weapon", "random_waves"]
 
 
 static func read_all(path: String = PATH) -> Dictionary:

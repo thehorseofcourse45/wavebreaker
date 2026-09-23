@@ -129,6 +129,13 @@ var _knockback_vel: Vector2 = Vector2.ZERO
 var _contact_timer: float = 0.0
 var _flash_timer: float = 0.0
 var _retarget_timer: float = 0.0
+## Shop "burn": rounds set this alight (BulletPool.burn_dps via bullet hits).
+## Refresh-not-stack: reapplying restarts the clock at the same DPS. The
+## fractional accumulator deals whole 1-HP ticks, so the number that pops is
+## always an int routed through take_damage (affixes/armour still apply).
+var _burn_dps: float = 0.0
+var _burn_time_left: float = 0.0
+var _burn_acc: float = 0.0
 var _nav_fallback: bool = false  # true = steer directly (no usable navmesh)
 ## Set by an archetype that must IGNORE the navmesh entirely (the boss plows
 ## through cover by design). Distinct from _nav_fallback, which is the runtime
@@ -405,6 +412,7 @@ func _physics_process(delta: float) -> void:
 		return
 	_contact_timer = maxf(_contact_timer - delta, 0.0)
 	_tick_affix(delta)
+	_tick_burn(delta)
 	_update_behavior(delta)
 	_refresh_target()
 	var desired: Vector2 = _desired_velocity()
@@ -509,6 +517,33 @@ func _check_player_contact() -> void:
 				if (collider as Node).health < player_hp_before:
 					_vampiric_heal()
 				break
+
+
+## Shop "burn": light this body alight. Called by Bullet on a player hit; the
+## DPS comes from BulletPool (pool restores it per run). Refresh, never stacks.
+func apply_burn(dps: float, duration: float) -> void:
+	if is_dead or dps <= 0.0:
+		return
+	_burn_dps = dps
+	_burn_time_left = duration
+	_burn_acc = 0.0
+
+
+## Per-frame burn upkeep. Runs only while alive and awake (the caller guards
+## both), so a dormant or dead body never ticks -- a plain enemy falls through.
+func _tick_burn(delta: float) -> void:
+	if _burn_time_left <= 0.0:
+		return
+	_burn_time_left -= delta
+	_burn_acc += _burn_dps * delta
+	while _burn_acc >= 1.0:
+		_burn_acc -= 1.0
+		if is_dead:
+			_burn_time_left = 0.0
+			return
+		# Whole 1-HP ticks through the normal damage path: armour, affixes and
+		# the damage counter all see burn exactly like a weak bullet.
+		take_damage(1)
 
 
 func take_damage(amount: int, knockback: Vector2 = Vector2.ZERO) -> int:

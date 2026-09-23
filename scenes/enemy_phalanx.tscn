@@ -1,0 +1,15 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/enemy_phalanx.gd" id="1"]
+[ext_resource type="PackedScene" path="res://scenes/enemy_base.tscn" id="2"]
+
+[node name="Enemy" instance=ExtResource("2")]
+script = ExtResource("1")
+max_health = 55
+contact_damage = 12
+move_speed = 130.0
+score_value = 20
+
+[node name="Body" parent="." index="0"]
+color = Color(0.45, 0.55, 0.95, 1)
+polygon = PackedVector2Array(12, 12, -12, 12, -12, -12, 12, -12)

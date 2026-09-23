@@ -1,0 +1,15 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/enemy_sentinel.gd" id="1"]
+[ext_resource type="PackedScene" path="res://scenes/enemy_base.tscn" id="2"]
+
+[node name="Enemy" instance=ExtResource("2")]
+script = ExtResource("1")
+max_health = 44
+contact_damage = 8
+move_speed = 100.0
+score_value = 20
+
+[node name="Body" parent="." index="0"]
+color = Color(0.2, 0.8, 0.75, 1)
+polygon = PackedVector2Array(13, 0, 0, 13, -13, 0, 0, -13)

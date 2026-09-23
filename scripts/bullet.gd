@@ -195,7 +195,9 @@ func _detonate(at: Vector2) -> void:
 		var offset: Vector2 = enemy.global_position - at
 		if offset.length() <= explosive_radius:
 			var push: Vector2 = offset.normalized() * BulletPool.base_knockback * 0.5 if offset.length_squared() > 1.0 else Vector2.ZERO
-			BulletPool.damage_dealt += int(enemy.take_damage(explosive_damage, push))
+			# The splash scales with the same group multipliers as the direct hit.
+			var splash: int = int(round(float(explosive_damage) * target_mult(enemy)))
+			BulletPool.damage_dealt += int(enemy.take_damage(splash, push))
 
 
 func _on_body_entered(body: Node2D) -> void:
@@ -221,7 +223,9 @@ func _handle_hit(body: Node2D) -> void:
 		# Crit is rolled per enemy hit, so one piercing round can crit on the
 		# first body and not the second. The number that pops is what landed.
 		var crit: bool = crit_chance > 0.0 and randf() < crit_chance
-		var dealt: int = int(round(float(damage) * (crit_multiplier if crit else 1.0)))
+		# Group multipliers (bossbane / mark / executioner) apply BEFORE the crit
+		# number lands, so a crit on a boss is crit-of-boosted, not boost-of-crit.
+		var dealt: int = int(round(float(damage) * target_mult(body) * (crit_multiplier if crit else 1.0)))
 		if crit:
 			BulletPool.crit_landed.emit()   # lifetime counter, not per-run bookkeeping
 		# The number carries the enemy's own colour, so a kill reads as WHICH
@@ -230,6 +234,10 @@ func _handle_hit(body: Node2D) -> void:
 		DamageNumbers.spawn(body.global_position, dealt, crit, tint)
 		var applied: int = int(body.take_damage(dealt, direction * knockback_force))
 		BulletPool.damage_dealt += applied   # actual HP removed, not blocked/overkill damage
+		# Shop "burn": the round lights the body it struck (pool DPS; a body that
+		# just died ignores the refresh inside apply_burn).
+		if BulletPool.burn_dps > 0.0 and body is EnemyBase:
+			(body as EnemyBase).apply_burn(BulletPool.burn_dps, BulletPool.BURN_DURATION)
 		# Explosive rounds detonate on the KILLING blow only: a wounded enemy does not
 		# blast, or every round would be an area weapon. `is_dead` is set by _die()
 		# synchronously inside take_damage.
@@ -242,6 +250,22 @@ func _handle_hit(body: Node2D) -> void:
 		return
 	if body is StaticBody2D:
 		deactivate()
+
+
+## Shop group multipliers (bossbane / mark / executioner), folded into one
+## number per hit: bosses, elites, and anything already under 20% HP. 1.0 when
+## no row was bought, so a plain run deals its old numbers exactly. Shared by
+## the direct hit and the explosive splash so both scale together.
+static func target_mult(body: Node) -> float:
+	var mult := 1.0
+	if body.is_in_group("bosses"):
+		mult *= BulletPool.vs_boss_mult
+	if body.is_in_group("elites"):
+		mult *= BulletPool.vs_elite_mult
+	if body is EnemyBase and not (body as EnemyBase).is_dead \
+			and float((body as EnemyBase).health) < float((body as EnemyBase).max_health) * 0.2:
+		mult *= BulletPool.exec_mult
+	return mult
 
 
 ## Public deactivate: hides the bullet and hands it back to the pool.

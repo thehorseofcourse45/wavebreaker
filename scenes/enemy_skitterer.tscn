@@ -1,0 +1,15 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/enemy_skitterer.gd" id="1"]
+[ext_resource type="PackedScene" path="res://scenes/enemy_base.tscn" id="2"]
+
+[node name="Enemy" instance=ExtResource("2")]
+script = ExtResource("1")
+max_health = 28
+contact_damage = 7
+move_speed = 185.0
+score_value = 18
+
+[node name="Body" parent="." index="0"]
+color = Color(0.45, 0.9, 0.95, 1)
+polygon = PackedVector2Array(16, 0, -10, 9, -10, -9)

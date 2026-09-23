@@ -12,11 +12,26 @@ signal collected(kind: String)
 @export var pool_size: int = 48
 @export var pickup_scene: PackedScene = preload("res://scenes/pickup.tscn")
 
+@export_group("Run config (shop-made)")
+## magnet (radius multiplier) and scavenger (extra drop odds) ride the pool
+## because pickups are pooled; the pool outlives a run, so Main restores both
+## with reset_run_config() beside BulletPool's -- same contract, same call site.
+@export var magnet_mult: float = 1.0
+@export var extra_drop_chance: float = 0.0
+## Shop "aid": health pickups heal PICKUP_HEALTH x this (see Main's collector).
+@export var heal_mult: float = 1.0
+
 var _free: Array[Pickup] = []
 var _all: Array[Pickup] = []
+var _base_magnet_mult: float = 1.0
+var _base_extra_drop_chance: float = 0.0
+var _base_heal_mult: float = 1.0
 
 
 func _ready() -> void:
+	_base_magnet_mult = magnet_mult
+	_base_extra_drop_chance = extra_drop_chance
+	_base_heal_mult = heal_mult
 	for i: int in pool_size:
 		_spawn_pooled_pickup()
 
@@ -33,6 +48,15 @@ func reset() -> void:
 		if is_instance_valid(pickup):
 			pickup._deactivate_immediate()
 	_free = _all.duplicate()
+
+
+## Restore shop-tunable values to their authored defaults. Main calls this once
+## at run start, right beside BulletPool.reset_run_config() -- pickup behavior
+## is per-run state, not the pool's own config.
+func reset_run_config() -> void:
+	magnet_mult = _base_magnet_mult
+	extra_drop_chance = _base_extra_drop_chance
+	heal_mult = _base_heal_mult
 
 
 func active_count() -> int:

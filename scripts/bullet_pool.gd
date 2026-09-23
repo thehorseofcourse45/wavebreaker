@@ -41,6 +41,17 @@ extends Node
 @export var explosive_radius: float = 0.0   # kill-blast radius (0 = off)
 @export var explosive_damage: int = 0       # damage that blast deals
 
+@export_group("Target multipliers (shop-made)")
+## bossbane / mark / executioner / burn write these from UpgradeSystem.buy;
+## inert (1.0 / 0.0) until a row is bought. Bullet reads them per hit --
+## group multipliers via Bullet.target_mult, burn via EnemyBase.apply_burn.
+@export var vs_boss_mult: float = 1.0
+@export var vs_elite_mult: float = 1.0
+@export var exec_mult: float = 1.0      # vs enemies already under 20% HP
+@export var burn_dps: float = 0.0       # 0 = rounds never ignite
+## Seconds one burn refresh lasts. Constant: the shop row owns the DPS.
+const BURN_DURATION := 2.0
+
 ## Emitted by a round that just crit, for the lifetime "crits landed" counter.
 ## The pool owns the signal because the pool owns crit_chance -- Bullet reads it.
 signal crit_landed
@@ -53,6 +64,10 @@ var _base_homing_strength: float = 0.0
 var _base_bounce_count: int = 0
 var _base_explosive_radius: float = 0.0
 var _base_explosive_damage: int = 0
+var _base_vs_boss_mult: float = 1.0
+var _base_vs_elite_mult: float = 1.0
+var _base_exec_mult: float = 1.0
+var _base_burn_dps: float = 0.0
 
 ## Damage the player's rounds have dealt since Main zeroed it at run start (the
 ## STATS tab's DPS column). NOT cleared by reset(): an arena swap mid-run must not
@@ -70,6 +85,10 @@ func _ready() -> void:
 	_base_bounce_count = bounce_count
 	_base_explosive_radius = explosive_radius
 	_base_explosive_damage = explosive_damage
+	_base_vs_boss_mult = vs_boss_mult
+	_base_vs_elite_mult = vs_elite_mult
+	_base_exec_mult = exec_mult
+	_base_burn_dps = burn_dps
 	for i: int in pool_size:
 		_spawn_pooled_bullet()
 
@@ -130,6 +149,10 @@ func reset_run_config() -> void:
 	bounce_count = _base_bounce_count
 	explosive_radius = _base_explosive_radius
 	explosive_damage = _base_explosive_damage
+	vs_boss_mult = _base_vs_boss_mult
+	vs_elite_mult = _base_vs_elite_mult
+	exec_mult = _base_exec_mult
+	burn_dps = _base_burn_dps
 
 
 ## How many bullets are currently flying (handy for HUD/debug).

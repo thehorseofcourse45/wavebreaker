@@ -21,7 +21,9 @@ in code, with a handful of CC0 streams for the music beds.
 ## Weapons
 
 Pick one on the title screen before a run; it sets the shooting baseline the shop
-then upgrades on top of.
+then upgrades on top of. The shop itself carries **38 rows** (each with a
+procedurally drawn icon); every wave clears and deals a random hand of six —
+REROLL or the `offers` upgrade widens it.
 
 | Gun | Character |
 |-----|-----------|
@@ -32,6 +34,12 @@ then upgrades on top of.
 | `LANCE` | Hyper-velocity slug that pierces four enemies in a line |
 | `FURNACE` | Short-range cone of short-lived rounds |
 | `SLUGGER` | Slow hand cannon, pierces one, shoves hard |
+
+## Arenas
+
+Seven arenas (`Main.ARENA_SCENES`), unlocked in run order: a full boss wave
+advances to the next; the vault behind `vault_arena` is gated until you clear
+wave 20. Each has its own hazard table entry (`ArenaHazard`).
 
 ## The adaptive director
 
@@ -49,9 +57,9 @@ trimmed because the boss *is* the wave.
 
 ## The bestiary
 
-`Esc` -> **BESTIARY**: every enemy in the game, grouped `NORMAL` / `ELITES` /
-`BOSSES`, each with a portrait, a line on how it fights and its base HP. The
-roster is taller than the window, so the tab scrolls.
+`Esc` -> **BESTIARY**: every enemy in the game (49 rows), grouped `NORMAL` /
+`ELITES` / `BOSSES`, each with a portrait, a line on how it fights and its base
+HP. The roster is taller than the window, so the tab scrolls.
 
 Enemies you have not met yet are dimmed and keep their fight hint hidden; the
 progress line counts how many you have met, and that set is saved when a run
@@ -61,8 +69,8 @@ never three lists to keep in step.
 
 ## Elites
 
-Every archetype you meet also has an **elite variant** (33 bestiary rows in all:
-15 normal, 14 elite, 4 bosses). An elite is the same enemy with a shield phase --
+Every archetype you meet also has an **elite variant** (49 bestiary rows in all:
+23 normal, 22 elite, 4 bosses). An elite is the same enemy with a shield phase --
 invulnerable in bursts, cyan while it holds and its natural colour when it drops
 -- plus 2.5x health and 3x score.
 
@@ -118,6 +126,16 @@ godot --path . NEON_SHOT=run      # arena 1 in a live run
 godot --path . NEON_SHOT=over     # game-over summary card
 godot --path . NEON_SHOT=shadow   # occluder shadow A/B measurement
 ```
+
+## Shop
+
+Between waves: a random hand of 6 from the 38-row registry (`UpgradeSystem.DEFS`).
+Prices grow ×1.70 per level of the same row (plus a ~+50% base-cost pass over
+earlier builds). Rarity (`common` / `rare` / `epic`) multiplies both price and
+effect size. `bargain` cuts rerolls 40%/level; `offers` adds one row per level to
+the hand. Pool-written rows (crit, homing, ricochet, explosive, bossbane, mark,
+executioner, burn, magnet, scavenger) reset at the start of every run via
+`BulletPool.reset_run_config()` / `PickupPool.reset_run_config()`.
 
 ## Build
 

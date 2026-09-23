@@ -75,8 +75,9 @@ modulate = Color(1, 1, 1, 0.65)
 size_flags_horizontal = 4
 theme_override_constants/separation = 10
 
-[node name="Mutators" type="HBoxContainer" parent="./Center/Card/Margin/Column"]
+[node name="Mutators" type="FlowContainer" parent="./Center/Card/Margin/Column"]
 visible = false
+custom_minimum_size = Vector2(520, 0)
 size_flags_horizontal = 4
 theme_override_constants/separation = 12
 
@@ -111,6 +112,13 @@ tooltip_text = "Credits only buy healing."
 theme_override_font_sizes/font_size = 16
 text = "DAILY"
 tooltip_text = "Seed the run to today's date - every run today plays the same waves."
+
+[node name="RandomCheck" type="CheckButton" parent="./Center/Card/Margin/Column"]
+custom_minimum_size = Vector2(300, 36)
+size_flags_horizontal = 4
+theme_override_font_sizes/font_size = 18
+text = "RANDOM WAVES"
+tooltip_text = "Every wave rolls one of 17 randomized wave types instead of the scripted table."
 
 [node name="Audio" type="VBoxContainer" parent="./Center/Card/Margin/Column"]
 theme_override_constants/separation = 2

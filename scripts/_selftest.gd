@@ -6,9 +6,10 @@ extends Node
 const Storage := preload("res://scripts/storage.gd")
 
 ## A maxed build must need at least this long to clear the wave-10 ENCOUNTER
-## (both bosses, killed back to back). Measured at boss_count=2 x 5500 base hp;
-## raise it together with the boss's max_health / boss_count for a longer fight.
-const MIN_BOSS_FIGHT_SECONDS := 8.0
+## (both bosses, killed back to back). Measured at boss_count=2 x 9000 base hp
+## (the hardened Warden); raise it together with the boss's max_health /
+## boss_count for a longer fight.
+const MIN_BOSS_FIGHT_SECONDS := 10.0
 
 func attach_to(main: Node) -> void:
 	if "NEON_TEST" in OS.get_cmdline_args():
@@ -37,11 +38,23 @@ func _run(main: Node) -> void:
 	Unlockables.refresh()
 	Storage.set_value(Perks.SAVE_KEY, {})
 	Perks.refresh()
+	# Run-mode preferences pin off too: the composition assertions read the
+	# AUTHORED table, and Main re-seeds the live flags from these keys every
+	# time a probe returns to the menu (a save with random_waves on rolls
+	# archetypes that carry no "elite" key and share no keys with the table).
+	Storage.set_value("random_waves", false)
+	Storage.set_value("boss_rush", false)
 
 	# -- Upgrade economy ------------------------------------------------------
 	var up: Node = load("res://scripts/upgrade_system.gd").new()
 	main.add_child(up)
 	var player: Node = main.get_node("World/Player")
+	# The loadout is a saved preference as well: Main seeded the player with the
+	# save's gun before this suite ran, and the upgrade/balance probes below
+	# assume the scene's baseline rifle (e.g. needler bottoms fire_rate out at
+	# the 0.06 floor, so a buy cannot shrink it).
+	Storage.set_value(Weapons.SAVE_KEY, Weapons.DEFAULT_ID)
+	player.apply_weapon(Weapons.DEFAULT_ID)
 	var base_damage: int = player.bullet_damage
 	var base_hp: int = player.max_health
 	var base_rate: float = player.fire_rate
@@ -49,14 +62,14 @@ func _run(main: Node) -> void:
 	if player.fire_rate >= base_rate:
 		failed.append("fire_rate should have shrunk after buy")
 
-	var r0: Dictionary = up.buy("damage", 80, player)
+	var r0: Dictionary = up.buy("damage", 120, player)
 	if not bool(r0.ok):
 		failed.append("buy damage ok")
 	if player.bullet_damage != base_damage + 4:
 		failed.append("damage +4 applied, got %d" % player.bullet_damage)
 	if up.level("damage") != 1:
 		failed.append("damage level 1")
-	# gate: only 39 credits, second purchase should fail
+	# gate: only 39 credits, second purchase (204 = 120 x 1.70 growth) must fail
 	var r1: Dictionary = up.buy("damage", 39, player)
 	if bool(r1.ok):
 		failed.append("124-cost purchase with 39 should fail")
@@ -79,6 +92,274 @@ func _run(main: Node) -> void:
 
 	# -- Wave composition -----------------------------------------------------
 	var wm: Node = main.get_node("WaveManager")
+	# The composition assertions below are written against the AUTHORED table.
+	# Main seeded the live flags from the player's save before this suite ran
+	# (random_waves in particular rolls archetypes that carry no "elite" key),
+	# so pin them off here -- same reason _hp_mult/_speed_mult get pinned later.
+	wm.random_waves = false
+	wm.boss_rush = false
+	# Main holds its OWN copies of the run-mode preferences, seeded at boot and
+	# pushed back onto the WaveManager by every start_game() -- clearing the
+	# storage keys above cannot reach them, so pin Main's copies directly.
+	main._random_waves = false
+	main._boss_rush = false
+	main._weapon = Weapons.DEFAULT_ID
+
+	# -- The second twenty: buy-all, curated observables, icons ---------------
+	# Idea-pin (20 new upgrades). Every DEFS row must buy at level 1 with a real
+	# effect; the curated checks below cover one observable per family, and the
+	# dedicated probes (burn / group mults / evasion / offers / bargain) follow.
+	# Throwaway player + fresh registry: no live run stat is mutated. Pool
+	# writes from the buy-all are undone with reset_run_config() at the end so
+	# later probes (drop chance, crits) still see authored defaults.
+	var d3_player: Node = load("res://scenes/player.tscn").instantiate()
+	main.add_child(d3_player)
+	var d3_up: Node = load("res://scripts/upgrade_system.gd").new()
+	main.add_child(d3_up)
+	var d3_shop: CanvasLayer = main.get_node("UI/ShopPanel") as CanvasLayer
+	if d3_up.DEFS.size() != 48:
+		failed.append("upgrades: DEFS has %d rows, expected 48" % d3_up.DEFS.size())
+	# repair is a full heal: start hurt so its arm is observable, not a no-op.
+	d3_player.health = 1
+	for d3_d: Dictionary in d3_up.DEFS:
+		var d3_id := String(d3_d.id)
+		var d3_r: Dictionary = d3_up.buy(d3_id, 99999, d3_player)
+		if not bool(d3_r.ok):
+			failed.append("upgrades: buy-all failed on %s" % d3_id)
+			continue
+		if d3_up.level(d3_id) != 1:
+			failed.append("upgrades: %s did not reach level 1" % d3_id)
+	# Curated observables, one per hook family. Expected values fold in
+	# RARITY_EFFECT (common 1.0 / rare 1.25 / epic 1.5) at level 1.
+	if not is_equal_approx(PickupPool.magnet_mult, 1.5):
+		failed.append("magnet: magnet_mult %.2f, expected 1.50" % PickupPool.magnet_mult)
+	if not is_equal_approx(d3_player.dash_cooldown, 1.6 * 0.85):
+		failed.append("dash_cadence: cooldown %.3f, expected %.3f" % [d3_player.dash_cooldown, 1.6 * 0.85])
+	if d3_player.dash_strike_dmg != 10:
+		failed.append("dash_strike: damage %d, expected 10 (8 x 1.25 rare)" % d3_player.dash_strike_dmg)
+	if not is_equal_approx(d3_player.bullet_scale, 1.18):
+		failed.append("caliber: bullet_scale %.2f, expected 1.18" % d3_player.bullet_scale)
+	if not is_equal_approx(d3_player.weapon_knockback, 1.3):
+		failed.append("punch: knockback %.2f, expected 1.30" % d3_player.weapon_knockback)
+	if not is_equal_approx(d3_player.bullet_spread_deg, 7.0 * 0.65):
+		failed.append("focus: spread %.2f, expected %.2f" % [d3_player.bullet_spread_deg, 7.0 * 0.65])
+	if not is_equal_approx(d3_player.charge_time, 0.6 * 0.80):
+		failed.append("quickdraw: charge_time %.3f, expected %.3f" % [d3_player.charge_time, 0.6 * 0.80])
+	if d3_player.retaliate_dmg != 8:
+		failed.append("retaliate: damage %d, expected 8 (6 x 1.25 rare)" % d3_player.retaliate_dmg)
+	if not is_equal_approx(PickupPool.extra_drop_chance, 0.1875):
+		failed.append("scavenger: extra_drop_chance %.4f, expected 0.1875" % PickupPool.extra_drop_chance)
+	if not is_equal_approx(d3_player.regen_rate, 0.25):
+		failed.append("regen: rate %.2f, expected 0.25 (0.2 x 1.25 rare)" % d3_player.regen_rate)
+	if not is_equal_approx(d3_player.adrenaline_mult, 1.1875):
+		failed.append("adrenaline: mult %.4f, expected 1.1875" % d3_player.adrenaline_mult)
+	if not is_equal_approx(BulletPool.vs_boss_mult, 1.375):
+		failed.append("bossbane: vs_boss_mult %.3f, expected 1.375 (0.25 x 1.5 epic)" % BulletPool.vs_boss_mult)
+	if not is_equal_approx(BulletPool.vs_elite_mult, 1.375):
+		failed.append("mark: vs_elite_mult %.3f, expected 1.375" % BulletPool.vs_elite_mult)
+	if not is_equal_approx(BulletPool.exec_mult, 1.6):
+		failed.append("executioner: exec_mult %.2f, expected 1.60 (0.4 x 1.5 epic)" % BulletPool.exec_mult)
+	if not is_equal_approx(BulletPool.burn_dps, 6.0):
+		failed.append("burn: burn_dps %.1f, expected 6.0 (4 x 1.5 epic)" % BulletPool.burn_dps)
+	if not is_equal_approx(d3_player.evasion_chance, 0.1):
+		failed.append("evasion: chance %.3f, expected 0.10 (0.08 x 1.25 rare)" % d3_player.evasion_chance)
+	if not is_equal_approx(d3_player.bullet_lifetime, 2.5):
+		failed.append("longshot: lifetime %.2f, expected 2.50 (0 -> 2.0 x 1.25)" % d3_player.bullet_lifetime)
+	# The third ten: one observable per row (same buy-all, same rarity maths).
+	if not is_equal_approx(d3_player.acceleration, 2000.0 * 1.25):
+		failed.append("handling: acceleration %.0f, expected %.0f (2000 x 1.25)" % [d3_player.acceleration, 2000.0 * 1.25])
+	if not is_equal_approx(d3_player.dash_time, 0.16 * 1.20):
+		failed.append("dash_time: linger %.3f, expected %.3f" % [d3_player.dash_time, 0.16 * 1.20])
+	if not is_equal_approx(BulletPool.homing_range, 420.0 * 1.35):
+		failed.append("seeker: homing_range %.0f, expected %.0f (420 x 1.35)" % [BulletPool.homing_range, 420.0 * 1.35])
+	if not is_equal_approx(PickupPool.heal_mult, 1.5):
+		failed.append("aid: heal_mult %.2f, expected 1.50" % PickupPool.heal_mult)
+	if not is_equal_approx(d3_player.credit_mult, 1.1875):
+		failed.append("bounty: credit_mult %.4f, expected 1.1875 (0.15 x 1.25 rare)" % d3_player.credit_mult)
+	if not is_equal_approx(d3_player.knockback_resist, 0.4375):
+		failed.append("anchor: resist %.4f, expected 0.4375 (0.35 x 1.25 rare)" % d3_player.knockback_resist)
+	if not is_equal_approx(d3_player.charge_damage_mult, 3.0 * 1.3125):
+		failed.append("charge_power: mult %.3f, expected %.3f" % [d3_player.charge_damage_mult, 3.0 * 1.3125])
+	if not is_equal_approx(d3_player.charge_knockback_mult, 2.5 * 1.375):
+		failed.append("charge_knock: mult %.3f, expected %.3f" % [d3_player.charge_knockback_mult, 2.5 * 1.375])
+	if d3_player.charge_pierce != 3:
+		failed.append("charge_pierce: %d, expected 3 (2 built-in + 1)" % d3_player.charge_pierce)
+	if d3_player.last_stand_charges != 1:
+		failed.append("last_stand: charges %d, expected 1 (flat +1)" % d3_player.last_stand_charges)
+	# Icon parity: every row carries a known shape and a parseable colour.
+	var d3_shapes: Array[String] = ["chevron", "bolt", "ring", "hex", "cross",
+			"drop", "wing", "spark", "skull", "square", "default"]
+	for d3_ic: Dictionary in d3_up.DEFS:
+		var d3_ient: Variant = d3_ic.get("icon", null)
+		if not (d3_ient is Array) or (d3_ient as Array).size() != 2:
+			failed.append("icons: %s lacks a [shape, colour] icon entry" % String(d3_ic.id))
+			continue
+		if not d3_shapes.has(String((d3_ient as Array)[0])):
+			failed.append("icons: %s uses unknown shape %s" % [String(d3_ic.id), String((d3_ient as Array)[0])])
+		if not Color.html_is_valid(String((d3_ient as Array)[1])):
+			failed.append("icons: %s colour %s does not parse" % [String(d3_ic.id), String((d3_ient as Array)[1])])
+	# offers: deal() widens the hand by its level (OFFER_COUNT is 6, +1 here).
+	d3_shop.deal(d3_up)
+	if d3_shop._offered.size() != 7:
+		failed.append("offers: hand has %d rows at level 1, expected 7" % d3_shop._offered.size())
+	# bargain: one price formula, checked at every level (0 must stay REROLL_COST).
+	var d3_bar: Node = load("res://scripts/upgrade_system.gd").new()
+	main.add_child(d3_bar)
+	if ShopPanel.effective_reroll_cost(d3_bar) != ShopPanel.REROLL_COST:
+		failed.append("bargain: level 0 costs %d, expected flat %d" % [ShopPanel.effective_reroll_cost(d3_bar), ShopPanel.REROLL_COST])
+	d3_bar.buy("bargain", 99999, d3_player)
+	if ShopPanel.effective_reroll_cost(d3_bar) != 18:
+		failed.append("bargain: level 1 costs %d, expected 18" % ShopPanel.effective_reroll_cost(d3_bar))
+	d3_bar.buy("bargain", 99999, d3_player)
+	if ShopPanel.effective_reroll_cost(d3_bar) != 6:
+		failed.append("bargain: level 2 costs %d, expected 6" % ShopPanel.effective_reroll_cost(d3_bar))
+	d3_bar.queue_free()
+	# evasion: chance 1 always dodges (no HP loss, no i-frame spent); 0 never does.
+	d3_player.evasion_chance = 1.0
+	d3_player._invuln_timer = 0.0
+	var d3_ehp: int = d3_player.health
+	d3_player.take_damage(30)
+	if d3_player.health != d3_ehp:
+		failed.append("evasion: chance 1.0 still took damage (%d -> %d)" % [d3_ehp, d3_player.health])
+	d3_player.evasion_chance = 0.0
+	d3_player._invuln_timer = 0.0
+	d3_player.take_damage(30)
+	if d3_player.health >= d3_ehp:
+		failed.append("evasion: chance 0.0 dodged a hit")
+	d3_player.health = d3_player.max_health
+	# retaliate: a hit pulses every enemy inside 90 px (throwaway is at origin).
+	# The WaveManager's container binding happens later in the suite, so reach
+	# the live box straight from Main (same node the splitter probe installs).
+	var d3_box: Node = main.get_node("World/EnemyContainer")
+	var d3_ret_e: Node = load("res://scenes/enemy_chaser.tscn").instantiate()
+	d3_ret_e.position = Vector2(50, 0)
+	d3_ret_e.is_dormant = true
+	d3_box.add_child(d3_ret_e)
+	await main.get_tree().physics_frame
+	d3_player.global_position = Vector2.ZERO
+	d3_player._invuln_timer = 0.0
+	var d3_rethp: int = d3_ret_e.health
+	d3_player.take_damage(10)
+	if d3_ret_e.health >= d3_rethp:
+		failed.append("retaliate: adjacent enemy took no damage (%d -> %d)" % [d3_rethp, d3_ret_e.health])
+	d3_ret_e.queue_free()
+	# dash strike: one dash damages each body it touches exactly once.
+	var d3_ds_e: Node = load("res://scenes/enemy_chaser.tscn").instantiate()
+	d3_ds_e.position = Vector2(30, 0)
+	d3_ds_e.is_dormant = true
+	d3_box.add_child(d3_ds_e)
+	await main.get_tree().physics_frame
+	d3_player.global_position = Vector2.ZERO
+	d3_player.controls_enabled = true
+	var d3_dshp: int = d3_ds_e.health
+	if not d3_player.try_dash():
+		failed.append("dash strike: try_dash refused with controls enabled")
+	await main.get_tree().physics_frame
+	if d3_ds_e.health != d3_dshp - d3_player.dash_strike_dmg:
+		failed.append("dash strike: enemy HP %d -> %d, expected -%d" % [d3_dshp, d3_ds_e.health, d3_player.dash_strike_dmg])
+	d3_player.controls_enabled = false
+	d3_ds_e.queue_free()
+	# burn: a lit enemy ticks whole HP through take_damage, then stops when the
+	# window ends. 40 px/s chaser parked far away cannot reach anyone in time.
+	var d3_burn_e: Node = load("res://scenes/enemy_chaser.tscn").instantiate()
+	d3_burn_e.position = Vector2(4000, 4000)
+	d3_box.add_child(d3_burn_e)
+	for i in 3:
+		await main.get_tree().physics_frame
+	var d3_bhp0: int = d3_burn_e.health
+	d3_burn_e.apply_burn(4.0, 0.5)
+	for i in 30:
+		await main.get_tree().physics_frame
+	var d3_bhp1: int = d3_burn_e.health
+	if d3_bhp1 >= d3_bhp0:
+		failed.append("burn: health unchanged after 0.5 s at 4 dps (%d)" % d3_bhp0)
+	elif d3_bhp0 - d3_bhp1 > 4:
+		failed.append("burn: dealt %d HP in 0.5 s at 4 dps, expected 1-4" % (d3_bhp0 - d3_bhp1))
+	d3_burn_e.apply_burn(0.0, 0.0)   # cut the window (dps<=0 is refused; force it)
+	d3_burn_e._burn_time_left = 0.0
+	d3_burn_e._burn_dps = 0.0
+	var d3_bhp2: int = d3_burn_e.health
+	for i in 12:
+		await main.get_tree().physics_frame
+	if d3_burn_e.health != d3_bhp2:
+		failed.append("burn: still ticking after the window closed (%d -> %d)" % [d3_bhp2, d3_burn_e.health])
+	d3_burn_e.queue_free()
+	# Group multipliers on a real hit: crit off, burn off, only the multiplier
+	# under test left standing. Corridor y=100 is the suite's reserved lane.
+	var d3_sv_crit: float = BulletPool.crit_chance
+	var d3_sv_burn: float = BulletPool.burn_dps
+	var d3_sv_boss: float = BulletPool.vs_boss_mult
+	var d3_sv_elite: float = BulletPool.vs_elite_mult
+	var d3_sv_exec: float = BulletPool.exec_mult
+	BulletPool.crit_chance = 0.0
+	BulletPool.burn_dps = 0.0
+	BulletPool.vs_boss_mult = 1.25
+	BulletPool.vs_elite_mult = 1.0
+	BulletPool.exec_mult = 1.0
+	var d3_bb_boss: Node = load("res://scenes/enemy_boss.tscn").instantiate()
+	d3_bb_boss.position = Vector2(355, 100)
+	d3_bb_boss.is_dormant = true
+	d3_box.add_child(d3_bb_boss)
+	for i in 3:
+		await main.get_tree().physics_frame
+	var d3_bb_hp0: int = d3_bb_boss.health
+	BulletPool.reset()
+	var d3_bb_round: Node = BulletPool.fire(Vector2(-300, 100), Vector2.RIGHT, 12, 700.0)
+	var d3_bb_frames := 0
+	while is_instance_valid(d3_bb_round) and d3_bb_round.is_active and d3_bb_frames < 120:
+		await main.get_tree().physics_frame
+		d3_bb_frames += 1
+	var d3_bb_want: int = int(round(12.0 * 1.25))
+	if d3_bb_hp0 - d3_bb_boss.health != d3_bb_want:
+		failed.append("bossbane: boss lost %d HP, expected %d (12 x 1.25)" % [d3_bb_hp0 - d3_bb_boss.health, d3_bb_want])
+	# Wound it under 20% and stack executioner on top of bossbane.
+	d3_bb_boss.take_damage(int(float(d3_bb_boss.max_health) * 0.85))
+	BulletPool.exec_mult = 1.4
+	var d3_bb_hp1: int = d3_bb_boss.health
+	BulletPool.reset()
+	var d3_bb_round2: Node = BulletPool.fire(Vector2(-300, 100), Vector2.RIGHT, 12, 700.0)
+	var d3_bb_frames2 := 0
+	while is_instance_valid(d3_bb_round2) and d3_bb_round2.is_active and d3_bb_frames2 < 120:
+		await main.get_tree().physics_frame
+		d3_bb_frames2 += 1
+	var d3_bb_want2: int = int(round(12.0 * 1.25 * 1.4))
+	if d3_bb_hp1 - d3_bb_boss.health != d3_bb_want2:
+		failed.append("executioner: wounded boss lost %d HP, expected %d (12 x 1.25 x 1.4)" % [d3_bb_hp1 - d3_bb_boss.health, d3_bb_want2])
+	d3_bb_boss.queue_free()
+	# mark: elite group multiplier alone.
+	BulletPool.vs_boss_mult = 1.0
+	BulletPool.exec_mult = 1.0
+	BulletPool.vs_elite_mult = 1.25
+	var d3_mk_e: Node = load("res://scenes/enemy_chaser.tscn").instantiate()
+	d3_mk_e.add_to_group("elites")   # manual: WaveManager promotes real elites itself
+	d3_mk_e.position = Vector2(355, 100)
+	d3_mk_e.is_dormant = true
+	d3_box.add_child(d3_mk_e)
+	for i in 3:
+		await main.get_tree().physics_frame
+	var d3_mk_hp0: int = d3_mk_e.health
+	BulletPool.reset()
+	var d3_mk_round: Node = BulletPool.fire(Vector2(-300, 100), Vector2.RIGHT, 12, 700.0)
+	var d3_mk_frames := 0
+	while is_instance_valid(d3_mk_round) and d3_mk_round.is_active and d3_mk_frames < 120:
+		await main.get_tree().physics_frame
+		d3_mk_frames += 1
+	var d3_mk_want: int = int(round(12.0 * 1.25))
+	if d3_mk_hp0 - d3_mk_e.health != d3_mk_want:
+		failed.append("mark: elite lost %d HP, expected %d (12 x 1.25)" % [d3_mk_hp0 - d3_mk_e.health, d3_mk_want])
+	d3_mk_e.queue_free()
+	# Undo every pool write from this block: later probes pin authored defaults.
+	BulletPool.crit_chance = d3_sv_crit
+	BulletPool.burn_dps = d3_sv_burn
+	BulletPool.vs_boss_mult = d3_sv_boss
+	BulletPool.vs_elite_mult = d3_sv_elite
+	BulletPool.exec_mult = d3_sv_exec
+	BulletPool.reset_run_config()
+	PickupPool.reset_run_config()
+	BulletPool.reset()
+	d3_player.queue_free()
+	d3_up.queue_free()
+
 	var comp1: Dictionary = wm._composition_for_wave(1)
 	if not (comp1.has("weaver") and comp1.has("elite") and comp1.has("shooter")):
 		failed.append("wave_table lacks new enemy keys")
@@ -938,6 +1219,75 @@ func _run(main: Node) -> void:
 	player.charge_unlocked = false
 	BulletPool.reset()
 
+	# -- Charge shot scales with the shop AND the pool's run config ----------
+	# Idea-pin: the heavy round is a PLAYER round through BulletPool.fire, so
+	# (a) a shop "damage" purchase reaches it via the live stat (the economy
+	# probe above already proved buy -> bullet_damage; this proves the second
+	# hop bullet_damage -> charged damage on a throwaway player, so no live
+	# stat is mutated), and (b) crit/homing/ricochet/explosive pool config
+	# rides along exactly like a normal shot, and (c) lifetime/size are
+	# per-shot: a furnace-style round fired immediately before must not bleed
+	# its range/size into the heavy round through the shared pool.
+	var ch_saved_crit: float = BulletPool.crit_chance
+	var ch_saved_crit_mult: float = BulletPool.crit_multiplier
+	var ch_saved_homing: float = BulletPool.homing_strength
+	var ch_saved_bounce: int = BulletPool.bounce_count
+	var ch_saved_boom_r: float = BulletPool.explosive_radius
+	var ch_saved_boom_d: int = BulletPool.explosive_damage
+	BulletPool.crit_chance = 0.42
+	BulletPool.crit_multiplier = 2.5
+	BulletPool.homing_strength = 3.0
+	BulletPool.bounce_count = 2
+	BulletPool.explosive_radius = 50.0
+	BulletPool.explosive_damage = 9
+	var ch_bleed: Bullet = BulletPool.fire(Vector2(4000, 4000), Vector2.RIGHT,
+			1, 700.0, false, 0, 1.0, 0.3, 1.7)
+	ch_bleed.deactivate()
+	var ch_shop_player: Node = load("res://scenes/player.tscn").instantiate()
+	main.add_child(ch_shop_player)
+	var ch_shop_up: Node = load("res://scripts/upgrade_system.gd").new()
+	main.add_child(ch_shop_up)
+	ch_shop_player.charge_unlocked = true
+	var ch_shop_base: int = ch_shop_player.bullet_damage
+	ch_shop_up.buy("damage", 99999, ch_shop_player)
+	var ch_before_ids2: Array[int] = []
+	for b: Bullet in BulletPool._all:
+		if b.is_active:
+			ch_before_ids2.append(b.get_instance_id())
+	ch_shop_player.fire_charged(1.0)
+	var ch_round2: Bullet = null
+	for b: Bullet in BulletPool._all:
+		if b.is_active and not ch_before_ids2.has(b.get_instance_id()):
+			ch_round2 = b
+	if ch_round2 == null:
+		failed.append("charge scaling probe fired no new round")
+	else:
+		var ch_want2: int = int(round(float(ch_shop_player.bullet_damage) * ch_shop_player.charge_damage_mult))
+		if ch_shop_player.bullet_damage != ch_shop_base + 4:
+			failed.append("charge scaling: throwaway buy moved damage %d -> %d, expected +4" % [ch_shop_base, ch_shop_player.bullet_damage])
+		elif ch_round2.damage != ch_want2:
+			failed.append("charge damage %d, expected %d (shop damage x charge mult)" % [ch_round2.damage, ch_want2])
+		if not is_equal_approx(ch_round2.crit_chance, 0.42) or not is_equal_approx(ch_round2.crit_multiplier, 2.5):
+			failed.append("charge crit config %.2f/%.1f, pool says 0.42/2.5 - run config does not reach the heavy round" % [ch_round2.crit_chance, ch_round2.crit_multiplier])
+		if not is_equal_approx(ch_round2.homing_scale, 3.0) or ch_round2.bounce_left != 2:
+			failed.append("charge behavior config homing %.1f bounces %d, expected 3.0/2" % [ch_round2.homing_scale, ch_round2.bounce_left])
+		if not is_equal_approx(ch_round2.explosive_radius, 50.0) or ch_round2.explosive_damage != 9:
+			failed.append("charge explosive config %.0f/%d, expected 50/9" % [ch_round2.explosive_radius, ch_round2.explosive_damage])
+		if not is_equal_approx(ch_round2.lifetime, Bullet.BASE_LIFETIME):
+			failed.append("charge lifetime %.2f, expected BASE %.2f (previous shot's range bled through the pool)" % [ch_round2.lifetime, Bullet.BASE_LIFETIME])
+		var ch_want_scale2: float = maxf(ch_shop_player.bullet_scale, 1.0)
+		if not is_equal_approx(ch_round2.scale.x, ch_want_scale2):
+			failed.append("charge scale %.2f, expected %.2f (previous shot's size bled through the pool)" % [ch_round2.scale.x, ch_want_scale2])
+	BulletPool.crit_chance = ch_saved_crit
+	BulletPool.crit_multiplier = ch_saved_crit_mult
+	BulletPool.homing_strength = ch_saved_homing
+	BulletPool.bounce_count = ch_saved_bounce
+	BulletPool.explosive_radius = ch_saved_boom_r
+	BulletPool.explosive_damage = ch_saved_boom_d
+	ch_shop_up.queue_free()
+	ch_shop_player.queue_free()
+	BulletPool.reset()
+
 	# -- Crits: x2 damage on the hit, and a pooled number pops ----------------
 	var ct_target: Node = load("res://scenes/enemy_tank.tscn").instantiate()
 	wm._enemy_container.add_child(ct_target)
@@ -1102,26 +1452,88 @@ func _run(main: Node) -> void:
 	if shop_player.health != 51:
 		failed.append("shop: leech did not heal on kill (health %d)" % shop_player.health)
 
+	# -- The third ten: the new read sites ------------------------------------
+	# The sweep below proves each row MOVES a stat; these prove the stat is READ
+	# where the event happens (take_damage's death save / push, Main's kill
+	# credits, Main's health-pickup heal). last_stand gets a throwaway body --
+	# it flips is_alive -- while bounty/aid need Main's own player and balance,
+	# because Main's handlers own the grant.
+	var t3_player: Node = load("res://scenes/player.tscn").instantiate()
+	main.add_child(t3_player)
+	t3_player.last_stand_charges = 1
+	t3_player.health = 5
+	t3_player._invuln_timer = 0.0
+	t3_player.take_damage(999)
+	if not t3_player.is_alive or t3_player.health != 1 or t3_player.last_stand_charges != 0:
+		failed.append("last_stand: lethal hit should leave 1 HP and spend the charge (hp %d, charges %d)" % [t3_player.health, t3_player.last_stand_charges])
+	t3_player._invuln_timer = 0.0
+	t3_player.take_damage(999)
+	if t3_player.is_alive:
+		failed.append("last_stand: a second lethal hit with no charge left did not kill")
+	# anchor: the same push shoves a braced body less (50% of 200 = 100).
+	t3_player.revive(1.0)
+	t3_player.last_stand_charges = 0
+	t3_player.knockback_resist = 0.5
+	t3_player._invuln_timer = 0.0
+	t3_player.velocity = Vector2.ZERO
+	t3_player.take_damage(5, Vector2(200, 0))
+	if not is_equal_approx(t3_player.velocity.x, 100.0):
+		failed.append("anchor: 50%% resist turned a 200 push into %.0f, expected 100" % t3_player.velocity.x)
+	t3_player.queue_free()
+	# bounty: Main's kill handler scales the grant by the live player's stat.
+	var t3_bought: Dictionary = up_shop.buy("bounty", 99999, shop_player)   # rare: +0.15 x 1.25
+	if not bool(t3_bought.ok):
+		failed.append("bounty: could not buy the row")
+	var t3_enemy: Node = load("res://scenes/enemy_chaser.tscn").instantiate()
+	wm._enemy_container.add_child(t3_enemy)
+	var t3_credits0: int = main._credits
+	var t3_want: int = int(round(float(Perks.scaled_credits(t3_enemy.score_value)) * shop_player.credit_mult))
+	main._on_enemy_killed(t3_enemy)
+	if main._credits - t3_credits0 != t3_want:
+		failed.append("bounty: kill paid %d, expected %d" % [main._credits - t3_credits0, t3_want])
+	shop_player.credit_mult = 1.0   # later probes quote plain credit numbers
+	# aid: the health pickup heals PICKUP_HEALTH x heal_mult (1.5 -> 23 HP).
+	PickupPool.heal_mult = 1.5
+	shop_player.health = 1
+	main._on_pickup_collected("health")
+	var t3_aid_want: int = 1 + int(round(float(main.PICKUP_HEALTH) * 1.5))
+	if shop_player.health != t3_aid_want:
+		failed.append("aid: health pickup landed %d HP, expected %d" % [shop_player.health, t3_aid_want])
+	PickupPool.reset_run_config()
+
 	# -- Shop: no DEFS row may be a no-op -------------------------------------
 	# A row with no match arm shows in the shop, takes credits and changes
 	# nothing -- the "declared but dead" failure that reads as a working upgrade.
+	# A THROWAWAY player, not the live one: the sweep buys every row, and the
+	# second twenty carries state (evasion, dash strike) that would make later
+	# take_damage probes on the live player randomly dodge.
 	var up_sweep: Node = load("res://scripts/upgrade_system.gd").new()
 	main.add_child(up_sweep)
+	var sweep_player: Node = load("res://scenes/player.tscn").instantiate()
+	main.add_child(sweep_player)
+	sweep_player.health = 1   # repair must land on a hurt body to move health
 	for sweep_def: Dictionary in up_sweep.DEFS:
 		var sweep_id: String = String(sweep_def.id)
-		var sweep_before: Dictionary = _player_stat_snapshot(shop_player)
+		var sweep_before: Dictionary = _player_stat_snapshot(sweep_player)
 		var sweep_pool_before: Dictionary = _pool_stat_snapshot()
-		var sweep_res: Dictionary = up_sweep.buy(sweep_id, 999999, shop_player)
+		var sweep_res: Dictionary = up_sweep.buy(sweep_id, 999999, sweep_player)
 		if not bool(sweep_res.ok):
 			failed.append("shop: DEFS row '%s' could not be bought" % sweep_id)
-		elif _player_stat_snapshot(shop_player) == sweep_before \
+		elif sweep_id == "offers" or sweep_id == "bargain":
+			# Registry rows: the effect is READ from level() by ShopPanel.deal /
+			# effective_reroll_cost -- no player or pool stat moves. The hand-size
+			# and reroll-price probes cover that read path directly.
+			pass
+		elif _player_stat_snapshot(sweep_player) == sweep_before \
 				and _pool_stat_snapshot() == sweep_pool_before:
 			failed.append("shop: DEFS row '%s' was bought but moved no stat" % sweep_id)
-	# The sweep bought the pool-backed rows (crit / homing / ricochet / explosive),
-	# which mutate the SHARED pool: put it back, or a later probe measures a
-	# crit / behavior build it never asked for.
+	# The sweep bought the pool-backed rows (crit / behavior / group multipliers
+	# / magnet / scavenger), which mutate the SHARED autoloads: put them back,
+	# or a later probe measures a build it never asked for.
 	BulletPool.reset_run_config()
+	PickupPool.reset_run_config()
 	up_sweep.queue_free()
+	sweep_player.queue_free()
 	up_shop.queue_free()
 	BulletPool.reset()
 
@@ -1523,6 +1935,9 @@ func _run(main: Node) -> void:
 		boss_player.health = 400
 		boss.set_deferred("global_position", Vector2(0, -520))
 		await main.get_tree().physics_frame
+		# Clear strays from the walk phase first: a pre-existing hostile that
+		# expires inside the count frame would eat one from the tally.
+		BulletPool.reset()
 		var hostile_before: int = _count_hostile_active()
 		# Fire the volley DIRECTLY: the ring timer's phase depends on how long the
 		# boss has been alive, and counting a timer-driven volley is a coin flip on
@@ -1531,7 +1946,7 @@ func _run(main: Node) -> void:
 		await main.get_tree().physics_frame
 		var hostile_spawned: int = _count_hostile_active() - hostile_before
 		if hostile_spawned < int(boss.ring_bullets):
-			failed.append("boss: no bullet-hell volley appeared (%d hostile rounds after 1.4s)" % hostile_spawned)
+			failed.append("boss: no bullet-hell volley appeared (%d hostile rounds after 1 frame)" % hostile_spawned)
 		# Rounds must carry the boss's OWN speed, not the Bullet default: the ring
 		# flies at bullet_speed, the swirl at bullet_speed * spiral_speed_scale.
 		var boss_round_speed: float = 0.0
@@ -1585,7 +2000,12 @@ func _run(main: Node) -> void:
 	for i in 45:
 		await main.get_tree().physics_frame
 	BulletPool.crit_chance = balance_saved_crit
-	var balance_expected: int = int(balance_player.bullet_damage) * int(balance_player.bullets_per_shot)
+	# A maxed build owns bossbane/exec/burn too, so the volley is NOT plain
+	# damage x pellets: each round deals round(damage x target_mult) and the
+	# boss is at full HP (no exec), not an elite -- one target_mult call here
+	# mirrors exactly what Bullet._handle_hit computes per round.
+	var balance_expected: int = int(balance_player.bullets_per_shot) \
+			* int(round(float(balance_player.bullet_damage) * Bullet.target_mult(balance_boss)))
 	var balance_dps: float = float(volley_damage[0]) / maxf(balance_player.fire_rate, 0.001)
 	var balance_mult: float = float(wm._base_composition(10).get("hp_mult", 1.0))
 	var balance_hp: float = float(balance_boss.max_health) * balance_mult
@@ -2136,6 +2556,17 @@ func _run(main: Node) -> void:
 	wm._alive = 0
 	wm.is_running = false
 	wm.stop()
+	# Boss scene max_health must mirror the Beasts row (the bestiary prints the row).
+	for bp_row: Dictionary in Beasts.group("bosses"):
+		var bp_ps: PackedScene = load(String(bp_row.scene))
+		if bp_ps == null:
+			failed.append("boss parity: failed to load %s" % String(bp_row.scene))
+			continue
+		var bp_e: Node = bp_ps.instantiate()
+		if int(bp_e.get("max_health")) != int(bp_row.hp):
+			failed.append("boss parity: %s scene hp %d != registry hp %d"
+					% [String(bp_row.id), int(bp_e.get("max_health")), int(bp_row.hp)])
+		bp_e.free()
 	# -- Difficulty owns the elite COUNT ----------------------------------------
 	# EASY fields none at all, NORMAL the authored count, HARD and NIGHTMARE
 	# multiply it -- and the ladder has to stay ordered, or "harder" stops meaning
@@ -3807,11 +4238,37 @@ func _player_stat_snapshot(p: Node) -> Dictionary:
 		"pierce_count": p.pierce_count,
 		"charge_unlocked": p.charge_unlocked,
 		"health": p.health,
+		# The second twenty's player-side rows.
+		"dash_cooldown": p.dash_cooldown,
+		"dash_speed": p.dash_speed,
+		"dash_strike_dmg": p.dash_strike_dmg,
+		"bullet_spread_deg": p.bullet_spread_deg,
+		# Scene sentinels: 0 = "use the bullet's parked default", which apply_weapon
+		# then materializes as BASE_LIFETIME / 1.0. Normalize so the DEFAULT row's
+		# no-op check compares like with like.
+		"bullet_lifetime": p.bullet_lifetime if p.bullet_lifetime > 0.0 else float(Bullet.BASE_LIFETIME),
+		"bullet_scale": p.bullet_scale if p.bullet_scale > 0.0 else 1.0,
+		"weapon_knockback": p.weapon_knockback,
+		"charge_time": p.charge_time,
+		"retaliate_dmg": p.retaliate_dmg,
+		"regen_rate": p.regen_rate,
+		"adrenaline_mult": p.adrenaline_mult,
+		"evasion_chance": p.evasion_chance,
+		# The third ten's player-side rows.
+		"acceleration": p.acceleration,
+		"dash_time": p.dash_time,
+		"credit_mult": p.credit_mult,
+		"knockback_resist": p.knockback_resist,
+		"last_stand_charges": p.last_stand_charges,
+		"charge_damage_mult": p.charge_damage_mult,
+		"charge_knockback_mult": p.charge_knockback_mult,
+		"charge_pierce": p.charge_pierce,
 	}
 
 
-## The BulletPool tunables a shop row may move (crit + the behavior fields), so the
-## "no dead row" sweep covers the rows that write to the pool instead of the player.
+## The pool tunables a shop row may move (crit + behavior + the second
+## twenty's group multipliers and the PickupPool's magnet/scavenger), so the
+## "no dead row" sweep covers rows that write to the autoloads, not the player.
 func _pool_stat_snapshot() -> Dictionary:
 	return {
 		"crit_chance": BulletPool.crit_chance,
@@ -3821,6 +4278,13 @@ func _pool_stat_snapshot() -> Dictionary:
 		"bounce_count": BulletPool.bounce_count,
 		"explosive_radius": BulletPool.explosive_radius,
 		"explosive_damage": BulletPool.explosive_damage,
+		"vs_boss_mult": BulletPool.vs_boss_mult,
+		"vs_elite_mult": BulletPool.vs_elite_mult,
+		"exec_mult": BulletPool.exec_mult,
+		"burn_dps": BulletPool.burn_dps,
+		"magnet_mult": PickupPool.magnet_mult,
+		"extra_drop_chance": PickupPool.extra_drop_chance,
+		"heal_mult": PickupPool.heal_mult,
 	}
 
 
